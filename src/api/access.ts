@@ -37,7 +37,8 @@ export function resolvePrincipal(c: Context): Principal | null {
   const supplied = c.req.header('X-OpenPlod-Token') || '';
   const apiToken = process.env.OPENPLOD_API_TOKEN;
   const pairingToken = process.env.OPENPLOD_PAIRING_TOKEN;
-  if (!supplied) return credentialsConfigured() ? null : { kind: 'open' };
+  // An unconfigured development server is open to this computer only, never to the network.
+  if (!supplied) return credentialsConfigured() || !isLoopback(c) ? null : { kind: 'open' };
   if (apiToken && tokensEqual(apiToken, supplied)) return { kind: 'api' };
   if (pairingToken && tokensEqual(pairingToken, supplied)) {
     // The desktop app talks to its own service over loopback. From the network the same token is

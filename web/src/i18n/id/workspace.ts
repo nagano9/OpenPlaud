@@ -3,6 +3,7 @@ export const workspace: Record<string, string> = {
   "Permanently delete this recording and its audio? This cannot be undone.": "Hapus permanen rekaman ini beserta audionya? Tindakan ini tidak dapat dibatalkan.",
   "Delete the collection \"{name}\"? Its recordings are kept.": "Hapus koleksi \"{name}\"? Rekamannya tetap disimpan.",
   "All": "Semua",
+  "Advanced": "Lanjutan",
   "Voice": "Suara",
   "Imported": "Diimpor",
   "Starred": "Berbintang",

@@ -318,7 +318,8 @@ describe('stored sign-in token', () => {
     expect(await readStoredCloudToken()).toBeNull();
     const path = await writeStoredCloudToken(ACCOUNT);
     expect(path).toBe(cloudTokenPath());
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    // POSIX modes do not exist on Windows; the vault directory ACL protects the file there.
+    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(await readStoredCloudToken()).toBe(ACCOUNT);
     expect(await clearStoredCloudToken()).toBe(true);
     expect(await readStoredCloudToken()).toBeNull();

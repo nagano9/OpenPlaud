@@ -11,6 +11,14 @@ test('queue persists pending jobs, deduplicates recording work and respects prio
   recovered.register('task', async (data: { recordingId: string }) => { seen.push(data.recordingId); });
   await tick(); expect(seen).toEqual(['two', 'one']); expect(recovered.getStats().complete).toBe(2); db.close();
 });
+test('an unreadable persisted job is skipped instead of stopping startup', () => {
+  const db = new Database(':memory:'); new JobQueue(db);
+  db.query('INSERT INTO processing_jobs VALUES(?,?)').run('broken', '{not json');
+  db.query('INSERT INTO processing_jobs VALUES(?,?)').run('null', 'null');
+  expect(() => new JobQueue(db)).not.toThrow();
+  expect(new JobQueue(db).getJobs()).toEqual([]);
+  db.close();
+});
 test('restart recovers known remote jobs but never resubmits uncertain work', async () => {
   const db = new Database(':memory:'), initial = new JobQueue(db);
   for (const remote of [true, false]) {

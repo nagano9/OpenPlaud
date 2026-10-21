@@ -40,10 +40,13 @@ export class JobQueue {
   constructor(private database: Database, private retryDelaysMs: number[] = RETRY_DELAYS_MS) {
     database.exec('CREATE TABLE IF NOT EXISTS processing_jobs(id TEXT PRIMARY KEY,payload TEXT NOT NULL)');
     const rows = database.query('SELECT id, payload FROM processing_jobs ORDER BY rowid').all() as { id: string; payload: string }[];
-    const loaded = rows.map(row => {
-      const value = JSON.parse(row.payload);
-      return { ...value, createdAt: new Date(value.createdAt), startedAt: value.startedAt ? new Date(value.startedAt) : undefined,
-        completedAt: value.completedAt ? new Date(value.completedAt) : undefined } as Job;
+    const loaded = rows.flatMap(row => {
+      // One unreadable row must not stop the server from starting; it is left in place for inspection.
+      let value;
+      try { value = JSON.parse(row.payload); } catch { console.error(`[Jobs] Skipping unreadable job ${row.id}`); return []; }
+      if (!value || typeof value !== 'object') { console.error(`[Jobs] Skipping unreadable job ${row.id}`); return []; }
+      return [{ ...value, createdAt: new Date(value.createdAt), startedAt: value.startedAt ? new Date(value.startedAt) : undefined,
+        completedAt: value.completedAt ? new Date(value.completedAt) : undefined } as Job];
     });
     // Without pruning, every job ever run stays in memory and is rescanned on each queue step.
     const finished = loaded.filter(job => TERMINAL.includes(job.status));

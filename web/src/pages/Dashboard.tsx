@@ -132,6 +132,19 @@ export function Dashboard() {
       window.removeEventListener("plaud:sync-complete", load);
     };
   }, [load, invalidate]);
+  // While recordings are queued or being processed, refresh their rows quietly so status and AI titles appear on their own.
+  const processing = recordings.some(row => row.status === "pending" || row.status === "transcribing" || row.status === "summarizing");
+  useEffect(() => {
+    if (!processing) return;
+    const timer = window.setInterval(async () => {
+      const ticket = revision.current;
+      try {
+        const fresh = new Map((await api.getRecordings({ retention, limit: "100", ...(collectionId ? { collection: collectionId } : {}) })).map(row => [row.id, row]));
+        if (ticket === revision.current) setRecordings(current => current.map(row => fresh.has(row.id) ? { ...row, ...fresh.get(row.id) } : row));
+      } catch { /* the next tick retries; a full reload still reports errors */ }
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [processing, retention, collectionId]);
   const search = useDeferredValue(query.toLocaleLowerCase());
   const filtered = useMemo(
     () =>

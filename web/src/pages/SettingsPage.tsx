@@ -60,7 +60,7 @@ export function SettingsPage() {
     deepgramApiKeyConfigured: false,
     syncFolderPath: '~/Documents/PlaudSync',
     autoTranscribe: true,
-    autoSummarize: false,
+    autoSummarize: true,
     autoImport: false,
     plaudRecordingTypes: ['class', 'meeting', 'conversation', 'other'],
     deleteSourceAfterImport: false,

@@ -44,7 +44,7 @@ test('chunked transcription checkpoints each chunk and resumes after completed o
   const saved: LongCheckpoint[] = [], calls: string[] = [], log: string[] = [];
   let failAt = 1;
   const transcribe = async (path: string, options: TranscriptionOptions) => {
-    calls.push(path.split('/').at(-1)!); options.onCheckpoint?.({ phase: 'submitting' });
+    calls.push(path.split(/[\\/]/).at(-1)!); options.onCheckpoint?.({ phase: 'submitting' });
     if (calls.length - 1 === failAt) return { ...ok([]), success: false, error: 'HTTP 500' };
     return ok([{ start: 0, end: 3, text: `chunk ${calls.length}`, confidence: null }]);
   };

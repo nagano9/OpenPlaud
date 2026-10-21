@@ -90,11 +90,16 @@ describe('Managed Markdown export (KB-02)', () => {
     const document = note();
     await run();
     const outside = mkdtempSync(join(tmpdir(), 'openplod-outside-'));
+    // Windows only creates symlinks with Developer Mode or elevation; the rest of the test still runs.
+    let symlinks = true;
+    try { symlinkSync(join(outside, 'probe-target'), join(outside, 'probe')); } catch { symlinks = false; }
     try {
-      rmSync(join(root, 'Meeting notes.md'));
-      symlinkSync(join(outside, 'target.md'), join(root, 'Meeting notes.md'));
-      expect((await run({ overwrite: [document.id] })).items[0]).toMatchObject({ action: 'conflict', reason: 'not_a_file' });
-      expect(existsSync(join(outside, 'target.md'))).toBe(false);
+      if (symlinks) {
+        rmSync(join(root, 'Meeting notes.md'));
+        symlinkSync(join(outside, 'target.md'), join(root, 'Meeting notes.md'));
+        expect((await run({ overwrite: [document.id] })).items[0]).toMatchObject({ action: 'conflict', reason: 'not_a_file' });
+        expect(existsSync(join(outside, 'target.md'))).toBe(false);
+      }
     } finally { rmSync(outside, { recursive: true, force: true }); }
 
     writeFileSync(join(root, MANIFEST_NAME), JSON.stringify({ schemaVersion: 1, exportedAt: 'x', documents: { [document.id]: { path: '../escape.md', base: 'x.md', revision: 1, sha256: '0'.repeat(64) } } }));

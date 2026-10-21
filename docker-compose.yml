@@ -2,13 +2,16 @@ services:
   plaud-app:
     build: .
     ports:
-      - "3456:3456"
+      # Published on this computer only; put a TLS proxy in front before exposing it further.
+      - "127.0.0.1:3456:3456"
     volumes:
       - ./data:/app/data
       - ~/Documents/PlaudSync:/plaud
     environment:
       - HOST=0.0.0.0
       - PORT=3456
+      # Required: the container listens on 0.0.0.0, and the server refuses to start there without a token.
+      - OPENPLOD_PAIRING_TOKEN=${OPENPLOD_PAIRING_TOKEN:?Set OPENPLOD_PAIRING_TOKEN in .env}
       - MISTRAL_API_KEY=${MISTRAL_API_KEY}
       - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}

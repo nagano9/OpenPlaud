@@ -1,6 +1,6 @@
 import { db, sqlite } from '../db/client';
 import { revealSettings } from '../vault/secrets';
-import { readAiConfig, assertPrivacy } from '../ai/config';
+import { readAiConfig, assertPrivacy, customEndpoint } from '../ai/config';
 import { recordings, userSettings } from '../db/schema';
 import { eq } from 'drizzle-orm';
 
@@ -27,10 +27,12 @@ export async function forwardRecording(recordingId: string): Promise<string> {
       original_recorded_at: recording.recordedAt,
       fingerprint: recording.fingerprint,
     }));
-    const baseUrl = values.openWhistleBaseUrl.replace(/\/+$/, '');
+    // Audio and the bearer key go only to HTTPS (or this computer), never through a redirect.
+    const baseUrl = customEndpoint(values.openWhistleBaseUrl).base;
     assertPrivacy(readAiConfig(sqlite), 'openwhistle');
-    const response = await fetch(`${baseUrl}/agents/${values.openWhistleAgentId}/runs`, {
+    const response = await fetch(`${baseUrl}/agents/${encodeURIComponent(values.openWhistleAgentId)}/runs`, {
       method: 'POST',
+      redirect: 'error',
       headers: {
         Authorization: `Bearer ${values.openWhistleApiKey}`,
         'X-Idempotency-Key': recording.id,

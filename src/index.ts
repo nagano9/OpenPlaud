@@ -18,7 +18,7 @@ import { TranscriptionRouter } from './transcription/router';
 import { db, sqlite } from './db/client';
 import { OrganizerStore } from './organizer/store';
 import { createOrganizerApi } from './api/organizer';
-import { apiAccess } from './api/access';
+import { apiAccess, credentialsConfigured } from './api/access';
 import { RecordingAi } from './organizer/recording-ai';
 import { createRecordingAiApi } from './api/recording-ai';
 import { automaticPlaud } from './api/plaud';
@@ -40,7 +40,7 @@ import { createKnowledgeApi } from './api/knowledge';
 import { RecordingCollections } from './knowledge/collections';
 import { KnowledgeIndex } from './knowledge/retrieval';
 import { KnowledgeSuggestions } from './knowledge/suggestions';
-import { aiConfigSchema, readAiConfig, readSettings, assertPrivacy } from './ai/config';
+import { aiConfigSchema, readAiConfig, readSettings, assertPrivacy, textSelection, customEndpoint } from './ai/config';
 import { effectiveTranscription } from './ai/transcription-profiles';
 import { startAutomation } from './automation';
 import { emitAutomationEvent } from './automation/hooks';
@@ -68,6 +68,10 @@ console.log('[Transcription] Engines:', Object.entries(engineStatus).map(([k, v]
 // ============================================
 // Register job handlers
 // ============================================
+
+function textProviderReady() {
+  try { textSelection(sqlite, 'analysis'); return true; } catch { return false; }
+}
 
 jobQueue.register('process-recording', async (data: any, job) => {
   // An explicit provider comparison (TS-11) saves an independent version and nothing else.
@@ -113,11 +117,12 @@ jobQueue.register('process-recording', async (data: any, job) => {
     });
     void emitAutomationEvent({ type: 'recording.transcribed', recordingId, transcriptVersionId: job.id, provider: result.engine, model: typeof result.metadata?.model === 'string' ? result.metadata.model : null, current: documentUpdated });
 
-    if (documentUpdated && settings.autoSummarize === 'true') {
+    // Like Plaud, a new transcript is summarized and titled unless the owner turned it off or has no text provider yet.
+    if (documentUpdated && settings.autoSummarize !== 'false' && textProviderReady()) {
       await db.update(recordings).set({ status: 'summarizing' }).where(eq(recordings.id, recordingId));
       try {
         const { recordingAnalyzer } = await import('./analysis/analyzer');
-        await recordingAnalyzer.analyze(recordingId, true);
+        await recordingAnalyzer.analyze(recordingId, true, { autoTitle: true });
       } catch (error) {
         console.error(`[Job] Auto-summary failed for ${recordingId}:`, error);
       }
@@ -215,7 +220,7 @@ app.get('/api/settings', async (c) => {
       transcriptionEngine: readAiConfig(sqlite).transcriptionEngine,
       syncFolderPath: values.syncFolderPath || '~/Documents/PlaudSync',
       autoTranscribe: values.autoTranscribe ?? 'true',
-      autoSummarize: values.autoSummarize ?? 'false',
+      autoSummarize: values.autoSummarize ?? 'true',
       autoImport: values.autoImport ?? 'false',
       plaudRecordingTypes: values.plaudRecordingTypes ?? '["class","meeting","conversation","other"]',
       deleteSourceAfterImport: values.deleteSourceAfterImport ?? 'false',
@@ -248,6 +253,10 @@ app.put('/api/settings/:key', async (c) => {
   ]);
   if (!allowedKeys.has(key)) return c.json({ success: false, error: 'Unknown setting' }, 400);
   const { value } = await c.req.json();
+  if (key === 'openWhistleBaseUrl' && value) {
+    try { customEndpoint(String(value)); }
+    catch { return c.json({ success: false, error: 'OpenWhistle URL must use HTTPS (or run on this computer) and cannot contain credentials or a query string.' }, 400); }
+  }
   if (key === 'transcriptionEngine') {
     if (!['whisper', 'mistral', 'deepgram', 'openai', 'assemblyai'].includes(value)) return c.json({ success: false, error: 'Unknown transcription provider.' }, 400);
     const config = readAiConfig(sqlite);
@@ -320,10 +329,16 @@ purgeTrash();
 setInterval(purgeTrash, 6 * 3600 * 1000).unref();
 
 const port = parseInt(process.env.PORT || '3487', 10);
+const maxUploadBytes = Math.max(128, Number(process.env.OPENPLOD_MAX_UPLOAD_MB) || 2048) * 1024 * 1024;
 const hostname = process.env.HOST || '127.0.0.1';
 const tls = tlsOptions();
 console.log(`[PlaudApp] Starting on ${tls.tls ? 'https' : 'http'}://${hostname}:${port}`);
-if (!tls.tls && !['127.0.0.1', 'localhost', '::1'].includes(hostname)) console.warn('[Security] Plain HTTP on a non-loopback address: pairing tokens and audio are not encrypted in transit. Set OPENPLOD_TLS_CERT/OPENPLOD_TLS_KEY.');
+const loopbackHost = ['127.0.0.1', 'localhost', '::1'].includes(hostname);
+if (!loopbackHost && !credentialsConfigured()) {
+  console.error(`[Security] Refusing to listen on ${hostname} without OPENPLOD_PAIRING_TOKEN or OPENPLOD_API_TOKEN: the API would be reachable from the network with no sign-in.`);
+  process.exit(1);
+}
+if (!tls.tls && !loopbackHost) console.warn('[Security] Plain HTTP on a non-loopback address: pairing tokens and audio are not encrypted in transit. Set OPENPLOD_TLS_CERT/OPENPLOD_TLS_KEY.');
 
 export default {
   port,
@@ -331,5 +346,7 @@ export default {
   ...tls,
   // Bluetooth discovery can take up to 35 seconds before returning a result.
   idleTimeout: 60,
+  // Bun rejects bodies over 128 MB by default, which a multi-hour WAV recording exceeds.
+  maxRequestBodySize: maxUploadBytes,
   fetch: app.fetch,
 };

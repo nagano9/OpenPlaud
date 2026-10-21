@@ -69,3 +69,4 @@
   .onboarding-key { grid-template-columns: 1fr; }
   .onboarding-footer { padding: 12px 16px; }
 }
+.onboarding-recommended { margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--accent-foreground); font-size: 11px; font-style: normal; font-weight: 600; vertical-align: middle; }

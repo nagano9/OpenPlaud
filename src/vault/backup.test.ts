@@ -7,7 +7,8 @@ import { createBackup, restoreBackup, RestoreTargetNotEmpty, verifyBackup } from
 import { BackupPassphraseError } from './backup-crypto';
 
 const root = mkdtempSync(join(tmpdir(), 'openplod-backup-test-'));
-afterAll(() => rmSync(root, { recursive: true, force: true }));
+// Windows keeps restored SQLite files locked until the process exits; leftover temp files are harmless.
+afterAll(() => { try { rmSync(root, { recursive: true, force: true }); } catch (error) { if (process.platform !== 'win32') throw error; } });
 const fastScrypt = { N: 1 << 10, r: 8, p: 1 };
 
 function makeVault(name: string) {

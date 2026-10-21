@@ -4,6 +4,7 @@ export const workspace: Record<string, string> = {
   'Permanently delete this recording and its audio? This cannot be undone.': 'Supprimer définitivement cet enregistrement et son audio ? Cette action est irréversible.',
   'Delete the collection "{name}"? Its recordings are kept.': 'Supprimer la collection « {name} » ? Ses enregistrements sont conservés.',
   'All': 'Tous',
+  'Advanced': 'Avancé',
   'Voice': 'Voix',
   'Imported': 'Importé',
   'Starred': 'Favoris',

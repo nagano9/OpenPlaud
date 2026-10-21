@@ -1,6 +1,9 @@
 import type { Database } from 'bun:sqlite';
-import { chmodSync, existsSync, readFileSync, statSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { chmodSync, existsSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { migratePlaintextSecrets } from './secrets';
 import { recoverInterruptedImports, setLastRecoveryReport } from '../library/import-journal';
 
@@ -10,13 +13,42 @@ export function vaultPaths() {
   return { dataDirectory: dirname(database), database, library: resolve(process.env.OPENPLOD_LIBRARY_PATH || './data/recordings') };
 }
 
+/** Everyone, Authenticated Users or Users in an ACE make a Windows folder readable by other accounts. */
+const BROAD_WINDOWS_ACE = /;;;(WD|AU|BU|S-1-1-0|S-1-5-11|S-1-5-32-545)\)/;
+
+/** The folder's DACL as SDDL; icacls only saves to a (UTF-16) file. */
+function windowsSddl(path: string, run: typeof spawnSync): string | null {
+  const file = join(tmpdir(), `openplod-acl-${randomUUID()}.txt`);
+  try {
+    if (run('icacls', [path, '/save', file, '/q'], { encoding: 'utf8' }).status !== 0 || !existsSync(file)) return null;
+    return readFileSync(file, 'utf16le');
+  } finally { rmSync(file, { force: true }); }
+}
+
+/**
+ * Windows ignores POSIX modes, so a vault under e.g. D:\ inherits "Authenticated Users: Modify"
+ * and its key file and API keys are readable by every account. Replace inherited access with
+ * the owner, SYSTEM and Administrators; children inherit the new list.
+ */
+function hardenWindowsDirectory(path: string, run = spawnSync): boolean {
+  if (!existsSync(path)) return false;
+  const sddl = windowsSddl(path, run);
+  if (sddl !== null && !BROAD_WINDOWS_ACE.test(sddl)) return false;
+  const user = run('whoami', ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8' });
+  const sid = `${user.stdout ?? ''}`.trim().split(',').at(-1)?.replace(/"/g, '');
+  if (user.status !== 0 || !sid?.startsWith('S-')) throw new Error('Could not identify the current Windows account.');
+  const result = run('icacls', [path, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`, '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', '/q'], { encoding: 'utf8' });
+  if (result.status !== 0) throw new Error(`icacls failed for ${path}: ${`${result.stderr ?? result.stdout}`.trim()}`);
+  return true;
+}
+
 /**
  * REL-06: the data directory and library are private to the vault owner (0700) and
- * the database files are 0600. Only tightens; never loosens permissions, and skips
- * Windows, where POSIX modes do not apply.
+ * the database files are 0600. Only tightens; never loosens permissions. On Windows
+ * the same intent is applied with an owner-only ACL on both directories.
  */
-export function hardenVaultPermissions(paths = vaultPaths()): string[] {
-  if (process.platform === 'win32') return [];
+export function hardenVaultPermissions(paths = vaultPaths(), run = spawnSync): string[] {
+  if (process.platform === 'win32') return [paths.dataDirectory, paths.library].filter(directory => hardenWindowsDirectory(directory, run));
   const changed: string[] = [];
   const tighten = (path: string, mode: number) => {
     if (!existsSync(path)) return;

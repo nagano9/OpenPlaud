@@ -8,7 +8,6 @@ import {
   Folder,
   FolderHeart,
   HardDrive,
-  Home,
   Mic,
   Moon,
   NotebookPen,
@@ -43,13 +42,12 @@ import { COLLECTIONS_EVENT } from "./RecordingCollections";
 import { t } from "@/i18n";
 
 // Functions, not constants, so the labels follow the current language.
+// Home and Recordings were two entries for one screen; developer tools live under "Advanced".
 const desktopNav = () => [
-  { to: "/", icon: Home, label: t("Home") },
-  { to: "/recordings", icon: FolderHeart, label: t("Recordings") },
+  { to: "/", icon: FolderHeart, label: t("Recordings") },
   { to: "/transcripts", icon: FileText, label: t("Transcripts") },
   { to: "/notes", icon: NotebookPen, label: t("Documents") },
   { to: "/ai", icon: MessageSquare, label: t("AI Chat") },
-  { to: "/automations", icon: Wand2, label: t("Automations") },
 ];
 
 const mobileNav = () => [
@@ -160,12 +158,12 @@ export function Layout() {
                 to={to}
                 end={to === "/"}
                 className={({ isActive }) =>
-                  `nav-item ${isActive && !(to === "/recordings" && libraryView) ? "active" : ""}`
+                  `nav-item ${isActive || (to === "/" && location.pathname === "/recordings" && !libraryView) ? "active" : ""}`
                 }
               >
                 <Icon aria-hidden="true" />
                 <span>{label}</span>
-                {to === "/recordings" && recordingCount !== null && (
+                {to === "/" && recordingCount !== null && (
                   <small className="nav-count">{recordingCount}</small>
                 )}
               </NavLink>
@@ -188,23 +186,30 @@ export function Layout() {
               <Bluetooth />
               <span>{t("Plaud Device")}</span>
             </NavLink>
-            <Link
-              to="/android"
-              aria-current={location.pathname === '/android' ? 'page' : undefined}
-              className={`nav-item ${location.pathname === "/android" ? "active" : ""}`}
-            >
-              <Smartphone />
-              <span>Android</span>
-            </Link>
-            <NavLink
-              to="/developer"
-              className={({ isActive }) =>
-                `nav-item ${isActive ? "active" : ""}`
-              }
-            >
-              <Workflow />
-              <span>API &amp; MCP</span>
-            </NavLink>
+            <details className="sidebar-advanced" open={["/automations", "/android", "/developer"].includes(location.pathname) || undefined}>
+              <summary className="nav-item"><ChevronRight aria-hidden="true" /><span>{t("Advanced")}</span></summary>
+              <NavLink to="/automations" className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}>
+                <Wand2 />
+                <span>{t("Automations")}</span>
+              </NavLink>
+              <Link
+                to="/android"
+                aria-current={location.pathname === '/android' ? 'page' : undefined}
+                className={`nav-item ${location.pathname === "/android" ? "active" : ""}`}
+              >
+                <Smartphone />
+                <span>Android</span>
+              </Link>
+              <NavLink
+                to="/developer"
+                className={({ isActive }) =>
+                  `nav-item ${isActive ? "active" : ""}`
+                }
+              >
+                <Workflow />
+                <span>API &amp; MCP</span>
+              </NavLink>
+            </details>
           </nav>
           <div className="sidebar-actions">
             <Link

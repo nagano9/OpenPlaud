@@ -30,3 +30,15 @@ test('summaries record provider, model, reported usage and timing, and return th
   expect(JSON.parse(stored.provenance).provider).toBe('openai');
   expect((await analyzer.analyze(recordingId)).provenance).toEqual(result.provenance!);
 });
+
+test('auto title renames only a recording whose metadata was never edited', async () => {
+  const reply = (title: string) => new RecordingAnalyzer((async () => Response.json({ model: 'gpt-4.1-mini', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ title, summary: { overview: 'Report due.', keyPoints: [] }, extractedTasks: [] }) } }] })) as unknown as typeof fetch);
+  const row = () => sqlite.query('SELECT original_filename AS name, revision FROM recordings WHERE id=?').get(recordingId) as { name: string; revision: number };
+  sqlite.query('UPDATE recordings SET original_filename=?, revision=1 WHERE id=?').run('Standup.wav', recordingId);
+  await reply('Laporan mingguan').analyze(recordingId, true);
+  expect(row()).toEqual({ name: 'Standup.wav', revision: 1 });
+  await reply('# Laporan mingguan').analyze(recordingId, true, { autoTitle: true });
+  expect(row()).toEqual({ name: 'Laporan mingguan.wav', revision: 2 });
+  await reply('Judul lain').analyze(recordingId, true, { autoTitle: true });
+  expect(row().name).toBe('Laporan mingguan.wav');
+});

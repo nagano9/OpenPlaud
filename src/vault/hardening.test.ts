@@ -15,7 +15,7 @@ test('secrets are encrypted with a 0600 key file and bound to their setting name
   resetSecretKeyCache();
   const keyFile = join(root, 'key', 'vault.key');
   const key = secretKey(keyFile);
-  expect(statSync(keyFile).mode & 0o777).toBe(0o600);
+  if (process.platform !== 'win32') expect(statSync(keyFile).mode & 0o777).toBe(0o600);
   const stored = encryptSecret('mistralApiKey', 'sk-test-123', key);
   expect(stored.startsWith('enc:v1:')).toBe(true);
   expect(stored).not.toContain('sk-test');

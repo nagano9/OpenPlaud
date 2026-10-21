@@ -118,6 +118,11 @@ button:focus-visible, a:focus-visible, select:focus-visible { outline: 2px solid
 .nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
 .nav-item.active { border-color: var(--border); background: var(--secondary); color: var(--foreground); }
 .nav-item.active svg { color: var(--primary); }
+.sidebar-advanced > summary { cursor: pointer; list-style: none; }
+.sidebar-advanced > summary::-webkit-details-marker { display: none; }
+.sidebar-advanced > summary svg { transition: transform .15s; }
+.sidebar-advanced[open] > summary svg { transform: rotate(90deg); }
+.sidebar-advanced > .nav-item { padding-left: 22px; }
 .sidebar-section-label { color: var(--muted-foreground); font-size: 11px; padding: 20px 11px 8px; }
 .sidebar-capture { width: 100%; justify-content: flex-start; margin-bottom: 4px; }
 .sidebar-actions { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--border); padding: 12px; }
