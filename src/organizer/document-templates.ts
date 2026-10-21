@@ -29,7 +29,7 @@ export interface DocumentTemplate {
 }
 
 export const DOCUMENT_STYLES = [
-  'notes', 'meeting', 'interview', 'lecture', 'brief', 'prd', 'email',
+  'notes', 'meeting', 'interview', 'lecture', 'brief', 'prd', 'email', 'meeting-id',
 ] as const;
 export type DocumentStyle = (typeof DOCUMENT_STYLES)[number];
 
@@ -37,6 +37,20 @@ export const isDocumentStyle = (value: string): value is DocumentStyle =>
   (DOCUMENT_STYLES as readonly string[]).includes(value);
 
 const TEMPLATES: Record<DocumentStyle, DocumentTemplate> = {
+  'meeting-id': {
+    id: 'meeting-id',
+    label: 'Indonesian meeting minutes',
+    description: 'Notulen Indonesia dengan keputusan, tindak lanjut, dan kutipan sumber untuk ditinjau.',
+    instruction: 'Write the meeting minutes in Bahasa Indonesia, including when the transcript mixes Indonesian and English. '
+      + 'Use sections Tujuan, Pembahasan, Keputusan, Tindak lanjut, and Pertanyaan terbuka only where supported by the transcript. '
+      + 'Keep names, acronyms, amounts, and English technical terms unchanged. Distinguish proposals from agreed decisions. '
+      + 'For each decision or action, immediately include a supporting verbatim transcript excerpt on a single Markdown blockquote line starting with > . '
+      + 'Include at least one such source excerpt for the discussion even when no decisions or actions were agreed. '
+      + 'Blockquotes must contain at least 12 characters of exact source wording, without translation, ellipses, labels, formatting, or invented timestamps. '
+      + 'For actions use columns Tindakan, PIC, Tenggat; leave an unknown PIC or deadline as Belum disebutkan. '
+      + 'Do not infer a calendar date from a relative date without explicit source context. Never turn a suggestion into a commitment.',
+    requiresSections: true,
+  },
   notes: {
     id: 'notes',
     label: 'Structured notes',

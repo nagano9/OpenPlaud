@@ -86,7 +86,7 @@ export function RecordingTagsDialog({ recording, onSaved, onClose }: {
             {suggestion.title && <label><input type="checkbox" checked={useTitle} disabled={busy} onChange={event => setUseTitle(event.target.checked)} />{t('Rename to “{title}”', { title: suggestion.title })}</label>}
             {suggestion.tags.length > 0 && <div className="knowledge-chips" aria-label={t('Suggested tags')}>{suggestion.tags.map(tag => <button key={tag} type="button" disabled={busy || tags.some(value => value.toLocaleLowerCase() === tag)} onClick={() => setTags(current => addRecordingTags(current, tag))}><Plus aria-hidden="true" />{tag}</button>)}</div>}
             {!suggestion.title && !suggestion.tags.length && <p className="knowledge-note">{t('No new title or tags were suggested.')}</p>}
-            <p className="knowledge-note">{suggestion.provider} / {suggestion.model}{suggestion.truncated ? ` / ${t('only the beginning of a long transcript was read')}` : ''}</p>
+            <p className="knowledge-note">{suggestion.provider} / {suggestion.model}{suggestion.truncated ? ` / ${t('excerpts across the transcript were read; some content was omitted')}` : ''}</p>
           </>}
         </div>}
       </>}

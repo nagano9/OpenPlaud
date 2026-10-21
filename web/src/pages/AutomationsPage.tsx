@@ -2,13 +2,13 @@ import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } f
 import { AlertCircle, ArrowUp, Check, Copy, Download, History, KeyRound, ListChecks, Loader2, Pencil, Plus, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Trash2, Undo2, Wand2, X } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import { NoteDialog, FolderSelect } from '@/components/NoteDialogs'
-import { notesApi, type NoteFolder } from '@/lib/notes-api'
+import { notesApi, DOCUMENT_STYLES, documentStyleLabel, type DocumentStyle, type NoteFolder } from '@/lib/notes-api'
 import { aiSettingsApi, profilesApi, type AiSettings, type TranscriptionProfile } from '@/lib/ai-settings'
 import { api, type Recording } from '@/lib/api'
 import {
-  CONNECTORS, RECORDING_TYPES, RULE_SOURCES, VERIFY_SNIPPET, WEBHOOK_EVENT_TYPES, blankRule, pendingAcknowledgements,
-  rulesApi, tasksApi, webhooksApi,
-  type AutomationRule, type Connector, type ConnectorSettings, type RuleAction, type RuleInput, type RulePreview, type RuleRun, type RuleTrigger, type TaskDraft,
+  CONNECTORS, RECORDING_TYPES, RULE_SOURCES, TASK_EXECUTION_STATUSES, VERIFY_SNIPPET, WEBHOOK_EVENT_TYPES, blankRule, pendingAcknowledgements,
+  buildTaskPatch, rulesApi, tasksApi, webhooksApi,
+  type AutomationRule, type Connector, type ConnectorSettings, type RuleAction, type RuleInput, type RulePreview, type RuleRun, type RuleTrigger, type TaskDraft, type TaskExecutionStatus,
   type WebhookDelivery, type WebhookEventType, type WebhookSubscription,
 } from '@/lib/automation-api'
 import { formatDate, t, tn } from '@/i18n'
@@ -20,12 +20,13 @@ const message = (error: unknown) => error instanceof Error ? error.message : t('
 const when = (iso: string | null) => iso ? formatDate(iso) : '—'
 const sourceLabel = (source: string) => ({ plaud: 'Plaud', upload: t('Uploads'), mobile: t('Phone') } as Record<string, string>)[source] ?? source
 const recordingTypeLabel = (type: string) => ({ meeting: t('Meeting'), conversation: t('Conversation'), class: t('Class'), other: t('Other') } as Record<string, string>)[type] ?? type
-const templateLabel = (template: string) => ({ notes: t('Structured notes'), meeting: t('Meeting minutes'), interview: t('Interview notes'), lecture: t('Lecture notes'), brief: t('Project brief'), prd: t('Product requirements'), email: t('Follow-up email') } as Record<string, string>)[template]
+const templateLabel = (template: string) => DOCUMENT_STYLES.includes(template as DocumentStyle) ? documentStyleLabel(template as DocumentStyle) : template
 /** API status values shown as pills. */
 const statusLabel = (status: string) => ({
   pending: t('pending'), running: t('running'), waiting: t('waiting'), done: t('done'), complete: t('complete'), skipped: t('skipped'), failed: t('failed'), unknown: t('unknown'),
   cancelled: t('cancelled'), delivering: t('delivering'), delivered: t('delivered'), blocked: t('blocked'), created: t('created'), draft: t('draft'), approved: t('approved'), dismissed: t('dismissed'),
 } as Record<string, string>)[status] ?? status
+const executionStatusLabel = (status: TaskExecutionStatus) => ({ todo: t('To do'), in_progress: t('In progress'), blocked: t('Blocked'), done: t('Done') } as Record<TaskExecutionStatus, string>)[status]
 const connectorName = (connector: string) => connector[0].toUpperCase() + connector.slice(1)
 /** Fills `{name}` placeholders of an already translated sentence with React nodes. */
 const rich = (text: string, nodes: Record<string, ReactNode>) => text.split(/(\{\w+\})/).map((part, index) => {
@@ -186,7 +187,7 @@ function RuleEditor({ rule, context, onClose, onSaved }: { rule: AutomationRule 
           </div>}
           {action.type === 'generate_document' && <div className="rule-row">
             <label>{t('Template')}<select value={action.template} onChange={event => setAction(index, { ...action, template: event.target.value })}>
-              {['notes', 'meeting', 'interview', 'lecture', 'brief', 'prd', 'email'].map(value => <option key={value} value={value}>{templateLabel(value)}</option>)}</select></label>
+              {DOCUMENT_STYLES.map(value => <option key={value} value={value}>{templateLabel(value)}</option>)}</select></label>
             <label>{t('Save into')}<FolderSelect folders={context.folders} value={action.folderId ?? ''} onChange={value => setAction(index, { ...action, folderId: value || null })} /></label>
           </div>}
           {action.type === 'add_tags' && <label>{t('Tags')}<input value={tagText[index] ?? ''} onChange={event => { setTagText(value => ({ ...value, [index]: event.target.value })); setPreview(null) }} placeholder={t('meeting, auto')} /></label>}
@@ -407,8 +408,8 @@ function TasksPanel() {
 }
 
 function TaskRow({ task, selected, busy, onSelect, onSave, onDelete }: { task: TaskDraft; selected: boolean; busy: string; onSelect: (value: boolean) => void; onSave: (patch: Partial<TaskDraft>, label: string) => Promise<void>; onDelete: () => Promise<void> }) {
-  const [draft, setDraft] = useState({ title: task.title, notes: task.notes, owner: task.owner ?? '', dueDate: task.dueDate ?? '' })
-  const dirty = draft.title !== task.title || draft.notes !== task.notes || draft.owner !== (task.owner ?? '') || draft.dueDate !== (task.dueDate ?? '')
+  const [draft, setDraft] = useState({ title: task.title, notes: task.notes, owner: task.owner ?? '', dueDate: task.dueDate ?? '', executionStatus: task.executionStatus ?? 'todo' as TaskExecutionStatus })
+  const dirty = draft.title !== task.title || draft.notes !== task.notes || draft.owner !== (task.owner ?? '') || draft.dueDate !== (task.dueDate ?? '') || draft.executionStatus !== (task.executionStatus ?? 'todo')
   return <li className="task-row" data-status={task.status}>
     <input type="checkbox" aria-label={t('Select {title}', { title: task.title })} checked={selected} onChange={event => onSelect(event.target.checked)} />
     <div className="task-fields">
@@ -417,13 +418,20 @@ function TaskRow({ task, selected, busy, onSelect, onSave, onDelete }: { task: T
         <input aria-label={t('Owner')} value={draft.owner} maxLength={120} placeholder={t('Owner')} onChange={event => setDraft(value => ({ ...value, owner: event.target.value }))} />
         <input aria-label={t('Due date')} type="date" value={draft.dueDate} onChange={event => setDraft(value => ({ ...value, dueDate: event.target.value }))} />
       </div>
+      <label className="task-progress">{t('Execution status')}
+        <select aria-label={t('Execution status')} value={draft.executionStatus} onChange={event => setDraft(value => ({ ...value, executionStatus: event.target.value as TaskExecutionStatus }))}>
+          {TASK_EXECUTION_STATUSES.map(status => <option key={status} value={status}>{executionStatusLabel(status)}</option>)}
+        </select>
+      </label>
       {task.dueText && !task.dueDate && <small className="automation-hint">{t('Said: “{text}”. Set a date if you want one.', { text: task.dueText })}</small>}
       <textarea aria-label={t('Notes')} rows={2} value={draft.notes} maxLength={4000} placeholder={t('Notes')} onChange={event => setDraft(value => ({ ...value, notes: event.target.value }))} />
       <div className="task-meta"><span className="automation-pill" data-state={task.status}>{statusLabel(task.status)}</span>
+        {task.overdue && <span className="automation-pill task-overdue" data-state="blocked"><AlertCircle />{t('Overdue')}</span>}
+        {task.executionStatus && <span className="automation-pill" data-state={task.executionStatus}>{executionStatusLabel(task.executionStatus)}</span>}
         {task.exports.map(item => <span key={item.connector} className="automation-pill" data-state={item.status}>{connectorName(item.connector)}: {statusLabel(item.status)}{item.remoteUrl ? <> · <a href={item.remoteUrl} target="_blank" rel="noreferrer">{item.remoteId}</a></> : item.remoteId ? ` · ${item.remoteId}` : ''}</span>)}</div>
     </div>
     <div className="task-actions">
-      {dirty && <Button size="sm" variant="ghost" disabled={!!busy || !draft.title.trim()} onClick={() => void onSave({ title: draft.title, notes: draft.notes, owner: draft.owner || null, dueDate: draft.dueDate || null }, 'save')}><Save />{t('Save')}</Button>}
+      {dirty && <Button size="sm" variant="ghost" disabled={!!busy || !draft.title.trim()} onClick={() => void onSave(buildTaskPatch(task, draft), 'save')}><Save />{t('Save')}</Button>}
       {!dirty && task.status !== 'approved' && <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => void onSave({ status: 'approved' }, 'approve')}><Check />{t('Approve')}</Button>}
       {!dirty && task.status === 'approved' && <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => void onSave({ status: 'draft' }, 'unapprove')}><Undo2 />{t('Back to draft')}</Button>}
       {task.status !== 'dismissed' && <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => void onSave({ status: 'dismissed' }, 'dismiss')}><X />{t('Dismiss')}</Button>}

@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { TaskService } from './tasks';
+import { isTaskOverdue, TaskService } from './tasks';
 
 type Call = { url: string; init: RequestInit };
 function fixture(respond: (call: Call) => Promise<Response> | Response = () => Response.json({ id: 'td-1', url: 'https://todoist.com/showTask?id=td-1' })) {
@@ -15,6 +15,48 @@ function fixture(respond: (call: Call) => Promise<Response> | Response = () => R
   return { db, service, calls, recordingId };
 }
 const approve = (service: TaskService, id: string) => service.update(id, { status: 'approved', revision: service.get(id).revision });
+
+test('execution status is added to legacy task tables and remains independent from approval', () => {
+  const db = new Database(':memory:');
+  db.exec(`CREATE TABLE user_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT);
+    CREATE TABLE task_drafts (
+      id TEXT PRIMARY KEY, recording_id TEXT, source_ref TEXT UNIQUE, title TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', owner TEXT,
+      due_date TEXT, due_text TEXT, source TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', revision INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );`);
+  const legacyId = crypto.randomUUID();
+  db.query(`INSERT INTO task_drafts(id,recording_id,source_ref,title,notes,owner,due_date,due_text,source,status,revision,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(legacyId, null, 'legacy-source', 'Legacy task', 'Keep these notes', 'Ana', '2026-12-01', 'next month', 'extracted', 'approved', 7, '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z');
+  const service = new TaskService(db);
+  expect((db.query('PRAGMA table_info(task_drafts)').all() as { name: string }[]).filter(column => column.name === 'execution_status')).toHaveLength(1);
+  expect(service.get(legacyId)).toMatchObject({ title: 'Legacy task', notes: 'Keep these notes', owner: 'Ana', dueDate: '2026-12-01', dueText: 'next month', source: 'extracted', status: 'approved', revision: 7, executionStatus: 'todo' });
+
+  const task = service.create({ title: 'Finish the minutes', dueDate: '2020-01-01' });
+  const approved = service.update(task.id, { status: 'approved', revision: task.revision });
+  expect(approved).toMatchObject({ status: 'approved', executionStatus: 'todo', overdue: true });
+  const inProgress = service.update(task.id, {
+    title: approved.title, notes: approved.notes, owner: approved.owner, dueDate: approved.dueDate,
+    executionStatus: 'in_progress', revision: approved.revision,
+  });
+  expect(inProgress).toMatchObject({ status: 'approved', executionStatus: 'in_progress', overdue: true });
+  const done = service.update(task.id, { executionStatus: 'done', revision: inProgress.revision });
+  expect(done).toMatchObject({ status: 'approved', executionStatus: 'done', overdue: false });
+  expect(() => service.update(task.id, { executionStatus: 'paused', revision: done.revision })).toThrow();
+  expect(() => service.update(task.id, { executionStatus: 'blocked', revision: inProgress.revision })).toThrow('changed elsewhere');
+  expect(service.list({ executionStatus: 'done' }).map(row => row.id)).toEqual([task.id]);
+  db.close();
+});
+
+test('overdue uses UTC calendar days and excludes unapproved or completed work', () => {
+  const now = new Date('2026-10-21T00:30:00Z');
+  const task = { status: 'approved' as const, executionStatus: 'blocked' as const, dueDate: '2026-10-20' };
+  expect(isTaskOverdue(task, now)).toBe(true);
+  expect(isTaskOverdue({ ...task, dueDate: '2026-10-21' }, now)).toBe(false);
+  expect(isTaskOverdue({ ...task, dueDate: null }, now)).toBe(false);
+  expect(isTaskOverdue({ ...task, status: 'draft' }, now)).toBe(false);
+  expect(isTaskOverdue({ ...task, status: 'dismissed' }, now)).toBe(false);
+  expect(isTaskOverdue({ ...task, executionStatus: 'done' }, now)).toBe(false);
+});
 
 test('action items become local drafts once; spoken due dates stay text until a person sets a date', () => {
   const { db, service, recordingId } = fixture();

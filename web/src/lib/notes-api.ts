@@ -5,12 +5,12 @@ export type { DocumentGeneration } from '../../../src/organizer/types'
 import type { NoteFolder, NoteDocument, NotePage, NoteVersion, NoteDestination, NoteDelivery, NoteProperties, DocumentSource, TranscriptVersionBacklinks, SavedView, SavedViewFilters, ExportResult, ExportStatus } from '../../../src/organizer/types'
 
 /** Document templates offered by the backend (roadmap TS-07). */
-export const DOCUMENT_STYLES = ['notes', 'meeting', 'interview', 'lecture', 'brief', 'prd', 'email'] as const
+export const DOCUMENT_STYLES = ['notes', 'meeting', 'interview', 'lecture', 'brief', 'prd', 'email', 'meeting-id'] as const
 export type DocumentStyle = (typeof DOCUMENT_STYLES)[number]
 /** Picker labels for the templates, in the backend's order and the UI language. */
 export function documentStyleLabel(style: DocumentStyle): string {
   return { notes: t('Structured notes'), meeting: t('Meeting minutes'), interview: t('Interview notes'), lecture: t('Lecture notes'),
-    brief: t('Project brief'), prd: t('Product requirements'), email: t('Follow-up email') }[style]
+    brief: t('Project brief'), prd: t('Product requirements'), email: t('Follow-up email'), 'meeting-id': t('Indonesian meeting minutes') }[style]
 }
 export type { NoteFolder, NoteDocument, NoteSummary, NotePage, NoteVersion, NoteDestination, NoteDelivery, NoteProperties, DocumentSource, TranscriptVersionBacklinks, SavedView, SavedViewFilters } from '../../../src/organizer/types'
 export type { ExportResult, ExportStatus, ExportItem } from '../../../src/organizer/types'

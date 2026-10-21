@@ -20,6 +20,14 @@ const config = (input: Record<string, unknown> = {}) => aiConfigSchema.parse(inp
 const json = (body: unknown) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
 describe('Transcription profiles', () => {
+  test('Indonesian meeting preset preserves language and editable domain vocabulary', () => {
+    const meeting = profiles.create({ preset: 'rapat-id' });
+    const resolved = effectiveTranscription(db, config({ transcriptionEngine: 'whisper', transcriptionProfile: meeting.id }));
+    expect(resolved.options.language).toBe('id');
+    expect(meeting.vocabulary).toContain('PIC');
+    profiles.update(meeting.id, { vocabulary: ['Proyek Nusantara'] });
+    expect(PROFILE_PRESETS.find(preset => preset.id === 'rapat-id')?.vocabulary).toContain('PIC');
+  });
   test('presets are copied, names stay unique, and invalid combinations are refused', () => {
     const first = profiles.create({ preset: 'engineering' });
     expect(first).toMatchObject({ name: 'Engineering standup', engine: null, diarize: true, vocabulary: expect.arrayContaining(['Kubernetes']) });

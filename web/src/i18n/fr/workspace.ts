@@ -110,7 +110,15 @@ export const workspace: Record<string, string> = {
   'Ask AI about this recording...': 'Interrogez l’IA sur cet enregistrement...',
   'Summarize this meeting with source citations.': 'Résume cette réunion en citant les sources.',
   'Summary': 'Résumé',
+  'Indonesian meeting minutes': 'Compte rendu de réunion en indonésien',
+  'To do': 'À faire',
+  'In progress': 'En cours',
+  'Blocked': 'Bloqué',
+  'Done': 'Terminé',
+  'Execution status': 'État de l’exécution',
+  'Overdue': 'En retard',
   'Extract explicitly mentioned action items with source citations.': 'Extrais les actions à mener explicitement mentionnées, en citant les sources.',
+  'excerpts across the transcript were read; some content was omitted': 'des extraits répartis dans la transcription ont été lus ; une partie du contenu a été omise',
   'Action items': 'Actions à mener',
 
   // Recording detail

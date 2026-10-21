@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { AutomationError } from './common';
 import { WEBHOOK_EVENT_TYPES, type WebhookService } from './webhooks';
 import { RECORDING_TYPES, RULE_SOURCES, type RuleEngine } from './rules';
-import { CONNECTORS, type TaskService } from './tasks';
+import { CONNECTORS, TASK_EXECUTION_STATUSES, type TaskService } from './tasks';
 import { DOCUMENT_STYLES } from '../organizer/document-templates';
 
 function onError(error: Error, c: Context) {
@@ -54,8 +54,9 @@ export function createAutomationsApi(rules: RuleEngine, tasks: TaskService) {
 
   app.get('/tasks', c => {
     const status = z.enum(['draft', 'approved', 'dismissed']).optional().parse(c.req.query('status'));
+    const executionStatus = z.enum(TASK_EXECUTION_STATUSES).optional().parse(c.req.query('executionStatus'));
     const recordingId = z.string().uuid().optional().parse(c.req.query('recordingId'));
-    return c.json({ success: true, data: tasks.list({ status, recordingId }) });
+    return c.json({ success: true, data: tasks.list({ status, executionStatus, recordingId }) });
   });
   app.post('/tasks', async c => c.json({ success: true, data: tasks.create(await body(c)) }, 201));
   app.post('/tasks/extract', async c => c.json({ success: true, data: tasks.extract(await body(c)) }));

@@ -1,3 +1,8 @@
+> **OpenPlaud enrichment (unreleased):** this fork adds an Indonesian meeting profile,
+> source-checked Indonesian minutes, broader transcript sampling for title/tag suggestions,
+> and separate task execution progress. See the [Indonesian meeting guide](docs/indonesian-meetings.md)
+> for usage, validation, and current limitations. The upstream project documentation follows.
+
 <p align="center">
   <img src="docs/brand/openplod-mark.svg" alt="OpenPlod audio vault logo" width="112" height="112" />
 </p>

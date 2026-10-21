@@ -51,6 +51,20 @@ test('missing key, oversized input and invalid style never call a provider', asy
   await expect(noKey.generate(input(), async () => {})).rejects.toThrow('100 KB'); expect(calls).toBe(0);
 });
 
+test('Indonesian minutes verify source quotes and retain the source version when saved', async () => {
+  const text = '# Meeting\n\n## Keputusan\nSimpan rekaman asli.\n\n> The decision was to keep original recordings.';
+  const generator = service(async () => response(text));
+  const generated = await generator.generate({ ...input(), style: 'meeting-id' }, async () => {});
+  expect(generator.save(generated.id, {}).sourceVersionId).toBe(versionId);
+  for (const invalid of [content, '# Meeting\n\n## Keputusan\n> The budget is approved for tomorrow.']) {
+    const failing = service(async () => response(invalid));
+    const request = { ...input(), style: 'meeting-id' };
+    await expect(failing.generate(request, async () => {})).rejects.toThrow('verbatim source');
+    expect(failing.get(request.idempotencyKey).state).toBe('failed');
+    expect(() => failing.save(request.idempotencyKey, {})).toThrow('review');
+  }
+});
+
 test('provider errors are redacted and never fall back to a transcript copy', async () => {
   const generator = service(async () => new Response('private-key sensitive provider body', { status: 401 }));
   const request = input(); await expect(generator.generate(request, async () => {})).rejects.toThrow('Mistral rejected');

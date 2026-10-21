@@ -18,11 +18,14 @@ import { AutomationError, localOnly, nowIso, stableId, transportOutcome, type Fe
 export const CONNECTORS = ['todoist', 'linear', 'notion'] as const;
 export type Connector = typeof CONNECTORS[number];
 export type TaskStatus = 'draft' | 'approved' | 'dismissed';
+export const TASK_EXECUTION_STATUSES = ['todo', 'in_progress', 'blocked', 'done'] as const;
+export type TaskExecutionStatus = typeof TASK_EXECUTION_STATUSES[number];
 export type ExportState = 'pending' | 'created' | 'failed' | 'unknown';
 export interface TaskExport { connector: Connector; status: ExportState; remoteId: string | null; remoteUrl: string | null; error: string | null; attempts: number; updatedAt: string }
 export interface TaskDraft {
   id: string; recordingId: string | null; title: string; notes: string; owner: string | null; dueDate: string | null; dueText: string | null;
-  source: 'extracted' | 'manual'; status: TaskStatus; revision: number; createdAt: string; updatedAt: string; exports: TaskExport[];
+  source: 'extracted' | 'manual'; status: TaskStatus; executionStatus: TaskExecutionStatus; overdue: boolean;
+  revision: number; createdAt: string; updatedAt: string; exports: TaskExport[];
 }
 
 const title = z.string().trim().min(1).max(500).refine(value => !/[\x00-\x08\x0b-\x1f]/.test(value), 'Use a title without control characters');
@@ -30,8 +33,8 @@ const notes = z.string().max(4000).default('');
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)), 'Use a real date (YYYY-MM-DD)');
 const identifier = z.string().uuid();
 export const createTaskSchema = z.object({ title, notes, owner: z.string().trim().max(120).nullable().default(null), dueDate: isoDate.nullable().default(null), recordingId: identifier.nullable().default(null) }).strict();
-export const updateTaskSchema = z.object({ title: title.optional(), notes: notes.optional(), owner: z.string().trim().max(120).nullable().optional(), dueDate: isoDate.nullable().optional(),
-  status: z.enum(['draft', 'approved', 'dismissed']).optional(), revision: z.number().int().positive() }).strict();
+export const updateTaskSchema = z.object({ title: title.optional(), notes: z.string().max(4000).optional(), owner: z.string().trim().max(120).nullable().optional(), dueDate: isoDate.nullable().optional(),
+  status: z.enum(['draft', 'approved', 'dismissed']).optional(), executionStatus: z.enum(TASK_EXECUTION_STATUSES).optional(), revision: z.number().int().positive() }).strict();
 /** Items supplied by the client from a structure it just reviewed (e.g. TS-06 action items). */
 export const extractSchema = z.object({ recordingId: identifier, items: z.array(z.object({
   text: z.string().trim().min(1).max(600), owner: z.string().trim().max(120).nullish(), due: z.string().trim().max(60).nullish(),
@@ -47,14 +50,16 @@ export const connectorSettingsSchema = z.object({
 }).strict();
 const SETTING_KEYS = Object.keys(connectorSettingsSchema.shape) as (keyof z.infer<typeof connectorSettingsSchema>)[];
 
-type TaskRow = Omit<TaskDraft, 'exports'>;
-const taskColumns = `id, recording_id AS recordingId, title, notes, owner, due_date AS dueDate, due_text AS dueText, source, status, revision, created_at AS createdAt, updated_at AS updatedAt`;
+type TaskRow = Omit<TaskDraft, 'exports' | 'overdue'>;
+const taskColumns = `id, recording_id AS recordingId, title, notes, owner, due_date AS dueDate, due_text AS dueText, source, status, execution_status AS executionStatus, revision, created_at AS createdAt, updated_at AS updatedAt`;
 
 export function initializeTasks(database: Database) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS task_drafts (
       id TEXT PRIMARY KEY, recording_id TEXT, source_ref TEXT UNIQUE, title TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', owner TEXT,
-      due_date TEXT, due_text TEXT, source TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', revision INTEGER NOT NULL DEFAULT 1,
+      due_date TEXT, due_text TEXT, source TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft',
+      execution_status TEXT NOT NULL DEFAULT 'todo' CHECK (execution_status IN ('todo', 'in_progress', 'blocked', 'done')),
+      revision INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS task_drafts_recording ON task_drafts(recording_id, created_at);
@@ -63,17 +68,26 @@ export function initializeTasks(database: Database) {
       attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(task_id, connector)
     );
   `);
+  // Additive, idempotent migration for task execution progress. Older task
+  // tables have no column; SQLite fills existing rows with the default.
+  const columns = database.query('PRAGMA table_info(task_drafts)').all() as { name: string }[];
+  if (!columns.some(column => column.name === 'execution_status'))
+    database.exec("ALTER TABLE task_drafts ADD COLUMN execution_status TEXT NOT NULL DEFAULT 'todo' CHECK (execution_status IN ('todo', 'in_progress', 'blocked', 'done'))");
 }
 
 /** Only an unambiguous ISO date is kept; "next Friday" stays text for a person to resolve. */
 const asIsoDate = (value: string | null | undefined) => value && /^\d{4}-\d{2}-\d{2}$/.test(value.trim()) && isoDate.safeParse(value.trim()).success ? value.trim() : null;
+/** Due dates are canonical UTC calendar dates, so overdue comparisons use the current UTC day. */
+export function isTaskOverdue(task: Pick<TaskDraft, 'status' | 'executionStatus' | 'dueDate'>, now = new Date()) {
+  return task.status === 'approved' && task.executionStatus !== 'done' && Boolean(task.dueDate && task.dueDate < now.toISOString().slice(0, 10));
+}
 
 export class TaskService {
   constructor(readonly database: Database, private fetcher: Fetcher = fetch, private timeoutMs = 15000) { initializeTasks(database); }
 
-  list(filter: { recordingId?: string; status?: TaskStatus } = {}): TaskDraft[] {
-    const rows = this.database.query(`SELECT ${taskColumns} FROM task_drafts WHERE (?1 IS NULL OR recording_id=?1) AND (?2 IS NULL OR status=?2) ORDER BY created_at DESC, id LIMIT 500`)
-      .all(filter.recordingId ?? null, filter.status ?? null) as TaskRow[];
+  list(filter: { recordingId?: string; status?: TaskStatus; executionStatus?: TaskExecutionStatus } = {}): TaskDraft[] {
+    const rows = this.database.query(`SELECT ${taskColumns} FROM task_drafts WHERE (?1 IS NULL OR recording_id=?1) AND (?2 IS NULL OR status=?2) AND (?3 IS NULL OR execution_status=?3) ORDER BY created_at DESC, id LIMIT 500`)
+      .all(filter.recordingId ?? null, filter.status ?? null, filter.executionStatus ?? null) as TaskRow[];
     return rows.map(row => this.withExports(row));
   }
 
@@ -85,7 +99,7 @@ export class TaskService {
 
   private withExports(row: TaskRow): TaskDraft {
     const exports = this.database.query(`SELECT connector, status, remote_id AS remoteId, remote_url AS remoteUrl, error, attempts, updated_at AS updatedAt FROM task_exports WHERE task_id=? ORDER BY connector`).all(row.id) as TaskExport[];
-    return { ...row, exports };
+    return { ...row, overdue: isTaskOverdue(row), exports };
   }
 
   create(input: unknown): TaskDraft {
@@ -130,12 +144,15 @@ export class TaskService {
   update(id: string, input: unknown): TaskDraft {
     const data = updateTaskSchema.parse(input), current = this.get(id);
     if (current.revision !== data.revision) throw new AutomationError(409, 'revision_conflict', 'This task changed elsewhere. Reload and try again.');
-    const content = data.title !== undefined || data.notes !== undefined || data.owner !== undefined || data.dueDate !== undefined;
+    const content = (data.title !== undefined && data.title !== current.title)
+      || (data.notes !== undefined && data.notes !== current.notes)
+      || (data.owner !== undefined && data.owner !== current.owner)
+      || (data.dueDate !== undefined && data.dueDate !== current.dueDate);
     // Editing content after approval returns the task to review.
     const status = data.status ?? (content && current.status === 'approved' ? 'draft' : current.status);
-    this.database.query(`UPDATE task_drafts SET title=?, notes=?, owner=?, due_date=?, status=?, revision=revision+1, updated_at=? WHERE id=? AND revision=?`)
+    this.database.query(`UPDATE task_drafts SET title=?, notes=?, owner=?, due_date=?, status=?, execution_status=?, revision=revision+1, updated_at=? WHERE id=? AND revision=?`)
       .run(data.title ?? current.title, data.notes ?? current.notes, data.owner === undefined ? current.owner : data.owner, data.dueDate === undefined ? current.dueDate : data.dueDate,
-        status, nowIso(), id, data.revision);
+        status, data.executionStatus ?? current.executionStatus, nowIso(), id, data.revision);
     return this.get(id);
   }
 

@@ -11,6 +11,8 @@ export const RULE_SOURCES = ['plaud', 'upload', 'mobile'] as const
 export const RECORDING_TYPES = ['meeting', 'conversation', 'class', 'other'] as const
 export const CONNECTORS = ['todoist', 'linear', 'notion'] as const
 export type Connector = typeof CONNECTORS[number]
+export const TASK_EXECUTION_STATUSES = ['todo', 'in_progress', 'blocked', 'done'] as const
+export type TaskExecutionStatus = typeof TASK_EXECUTION_STATUSES[number]
 
 export interface WebhookSubscription {
   id: string; name: string; url: string; host: string; external: boolean; eventTypes: WebhookEventType[]; includeText: boolean
@@ -46,7 +48,22 @@ export interface RuleRun {
 export interface TaskExport { connector: Connector; status: 'pending' | 'created' | 'failed' | 'unknown'; remoteId: string | null; remoteUrl: string | null; error: string | null; attempts: number; updatedAt: string }
 export interface TaskDraft {
   id: string; recordingId: string | null; title: string; notes: string; owner: string | null; dueDate: string | null; dueText: string | null
-  source: 'extracted' | 'manual'; status: 'draft' | 'approved' | 'dismissed'; revision: number; createdAt: string; updatedAt: string; exports: TaskExport[]
+  source: 'extracted' | 'manual'; status: 'draft' | 'approved' | 'dismissed'; executionStatus: TaskExecutionStatus; overdue: boolean
+  revision: number; createdAt: string; updatedAt: string; exports: TaskExport[]
+}
+export interface TaskDraftEdit { title: string; notes: string; owner: string; dueDate: string; executionStatus: TaskExecutionStatus }
+
+/** Return only changed editable fields so execution progress does not look like content editing. */
+export function buildTaskPatch(task: Pick<TaskDraft, 'title' | 'notes' | 'owner' | 'dueDate' | 'executionStatus'>, draft: TaskDraftEdit) {
+  const patch: Partial<Pick<TaskDraft, 'title' | 'notes' | 'owner' | 'dueDate' | 'executionStatus'>> = {}
+  if (draft.title !== task.title) patch.title = draft.title
+  if (draft.notes !== task.notes) patch.notes = draft.notes
+  const owner = draft.owner || null
+  if (owner !== task.owner) patch.owner = owner
+  const dueDate = draft.dueDate || null
+  if (dueDate !== task.dueDate) patch.dueDate = dueDate
+  if (draft.executionStatus !== (task.executionStatus ?? 'todo')) patch.executionStatus = draft.executionStatus
+  return patch
 }
 export interface ConnectorSettings {
   todoist: { configured: boolean }; linear: { configured: boolean; teamId: string }
@@ -87,7 +104,7 @@ export const tasksApi = {
   list: () => request<TaskDraft[]>('/automations/tasks'),
   create: (input: { title: string; notes?: string; owner?: string | null; dueDate?: string | null; recordingId?: string | null }) => request<TaskDraft>('/automations/tasks', 'POST', input),
   extract: (recordingId: string) => request<{ created: TaskDraft[]; existing: number }>('/automations/tasks/extract', 'POST', { recordingId }),
-  update: (id: string, patch: Partial<Pick<TaskDraft, 'title' | 'notes' | 'owner' | 'dueDate' | 'status'>> & { revision: number }) => request<TaskDraft>(`/automations/tasks/${id}`, 'PATCH', patch),
+  update: (id: string, patch: Partial<Pick<TaskDraft, 'title' | 'notes' | 'owner' | 'dueDate' | 'status' | 'executionStatus'>> & { revision: number }) => request<TaskDraft>(`/automations/tasks/${id}`, 'PATCH', patch),
   remove: (id: string) => request<null>(`/automations/tasks/${id}`, 'DELETE'),
   export: (connector: Connector, taskIds: string[], retryUnknown = false) => request<{ results: ExportResult[] }>('/automations/tasks/export', 'POST', { connector, taskIds, confirm: true, retryUnknown }),
   connectors: () => request<ConnectorSettings>('/automations/tasks/connectors'),
@@ -103,7 +120,7 @@ export const tasksApi = {
 // ---------------------------------------------------------------- display helpers
 
 const SOURCE_LABELS: Record<string, string> = { plaud: 'Plaud', upload: 'Uploads', mobile: 'Phone' }
-export const TEMPLATE_LABELS: Record<string, string> = { notes: 'Structured notes', meeting: 'Meeting minutes', interview: 'Interview notes', lecture: 'Lecture notes', brief: 'Project brief', prd: 'Product requirements', email: 'Follow-up email' }
+export const TEMPLATE_LABELS: Record<string, string> = { notes: 'Structured notes', meeting: 'Meeting minutes', interview: 'Interview notes', lecture: 'Lecture notes', brief: 'Project brief', prd: 'Product requirements', email: 'Follow-up email', 'meeting-id': 'Indonesian meeting minutes' }
 
 /** "Plaud meetings, at least 5 min, tagged client" */
 export function describeTrigger(trigger: RuleTrigger): string {

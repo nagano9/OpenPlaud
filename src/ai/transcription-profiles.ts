@@ -33,6 +33,9 @@ export class ProfileError extends Error { constructor(public status: 400 | 404 |
 
 /** Starting points only: creating a profile from a preset copies it, so later preset changes never alter a saved profile. */
 export const PROFILE_PRESETS: ProfilePreset[] = [
+  { id: 'rapat-id', name: 'Rapat (Bahasa Indonesia)', description: 'Rapat kerja berbahasa Indonesia, termasuk istilah Inggris, keputusan, PIC, dan tindak lanjut.', engine: null, model: null, language: 'id', diarize: true,
+    prompt: 'Rapat kerja berbahasa Indonesia dengan kemungkinan istilah Inggris. Pertahankan nama orang, organisasi, proyek, singkatan, angka, dan istilah yang benar-benar diucapkan. Jangan menerjemahkan istilah Inggris atau menambahkan keputusan, PIC, dan tenggat yang tidak diucapkan.',
+    vocabulary: ['PIC', 'tindak lanjut', 'notulen', 'RKAP', 'KPI', 'milestone'] },
   { id: 'meeting', name: 'Team meeting', description: 'Colleagues discussing projects, decisions, and next steps.', engine: null, model: null, language: null, diarize: true,
     prompt: 'A business meeting between colleagues. It mentions people, project names, dates, decisions, and action items.', vocabulary: [] },
   { id: 'reunion-fr', name: 'Réunion (français)', description: 'Réunion de travail en français, noms propres et décisions.', engine: null, model: null, language: 'fr', diarize: true,

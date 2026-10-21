@@ -1,8 +1,9 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { fr } from './fr'
-import { setLocale, t, tn } from './index'
+import { id } from './id'
+import { formatDate, setLocale, t, tn } from './index'
 
 const root = join(import.meta.dir, '..')
 function sources(dir: string): string[] {
@@ -27,6 +28,8 @@ function keys(): Map<string, string> {
 }
 
 describe('UI localization', () => {
+  afterEach(() => setLocale('en'))
+
   test('every translated string has a French entry', () => {
     const missing = [...keys()].filter(([key]) => !(key in fr)).map(([key, file]) => `${file.replace(root, 'src')}: ${key}`)
     expect(missing).toEqual([])
@@ -37,10 +40,29 @@ describe('UI localization', () => {
       expect([key, names(value)]).toEqual([key, names(key)])
     }
   })
+
+  test('every source string has an Indonesian entry', () => {
+    const missing = [...keys()].filter(([key]) => !(key in id)).map(([key, file]) => `${file.replace(root, 'src')}: ${key}`)
+    expect(missing).toEqual([])
+  })
+
+  test('Indonesian entries keep their placeholders', () => {
+    for (const [key, value] of Object.entries(id)) {
+      const names = (text: string) => [...text.matchAll(/\{(\w+)\}/g)].map(match => match[1]).sort()
+      expect([key, names(value)]).toEqual([key, names(key)])
+    }
+  })
   test('interpolation and plurals', () => {
     setLocale('en')
     expect(t('Hello {name}', { name: 'Remi' })).toBe('Hello Remi')
     expect(tn(1, '{count} recording', '{count} recordings')).toBe('1 recording')
     expect(tn(3, '{count} recording', '{count} recordings')).toBe('3 recordings')
+
+    setLocale('id')
+    expect(t('Recording library')).toBe('Pustaka rekaman')
+    expect(t('Hello {name}', { name: 'Remi' })).toBe('Hello Remi')
+    expect(tn(1, '{count} recording', '{count} recordings')).toBe('1 rekaman')
+    expect(tn(3, '{count} recording', '{count} recordings')).toBe('3 rekaman')
+    expect(formatDate('2026-01-02T03:04:05Z', { timeZone: 'UTC', day: 'numeric', month: 'long', year: 'numeric' })).toBe('2 Januari 2026')
   })
 })

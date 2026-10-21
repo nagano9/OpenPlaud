@@ -1,23 +1,31 @@
 import { useSyncExternalStore } from 'react'
 import { fr } from './fr'
+import { id } from './id'
 
 /**
- * French/English UI localization (REL-09). English source strings are the keys, so an untranslated
- * string still reads correctly in English; `bun test` fails when a `t()` key has no French entry.
+ * English, French and Indonesian UI localization. English source strings are the keys,
+ * so a new string falls back to English; coverage tests require explicit locale entries.
  * Placeholders use `{name}` and are filled from `vars`.
  */
-export type Locale = 'en' | 'fr'
-export const LOCALES: { id: Locale; label: string }[] = [{ id: 'en', label: 'English' }, { id: 'fr', label: 'Français' }]
+export type Locale = 'en' | 'fr' | 'id'
+export const LOCALES: { id: Locale; label: string }[] = [
+  { id: 'en', label: 'English' },
+  { id: 'fr', label: 'Français' },
+  { id: 'id', label: 'Bahasa Indonesia' },
+]
 const STORAGE_KEY = 'openplod.locale'
-const dictionaries: Record<Locale, Record<string, string>> = { en: {}, fr }
+const dictionaries: Record<Locale, Record<string, string>> = { en: {}, fr, id }
 const listeners = new Set<() => void>()
 
 function initial(): Locale {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
-    if (saved === 'en' || saved === 'fr') return saved
+    if (saved === 'en' || saved === 'fr' || saved === 'id') return saved
   } catch { /* storage unavailable: fall back to the browser language */ }
-  return typeof navigator !== 'undefined' && navigator.language?.toLowerCase().startsWith('fr') ? 'fr' : 'en'
+  const language = typeof navigator !== 'undefined' ? navigator.language?.toLowerCase() ?? '' : ''
+  if (language.startsWith('fr')) return 'fr'
+  if (language.startsWith('id')) return 'id'
+  return 'en'
 }
 let current: Locale = initial()
 if (typeof document !== 'undefined') document.documentElement.lang = current
@@ -45,4 +53,4 @@ export function tn(count: number, one: string, other: string, vars?: Record<stri
   return t(plural, { count, ...vars })
 }
 /** Dates and numbers in the UI language. */
-export const formatDate = (value: string | number | Date, options?: Intl.DateTimeFormatOptions) => new Date(value).toLocaleString(current === 'fr' ? 'fr-FR' : 'en-US', options)
+export const formatDate = (value: string | number | Date, options?: Intl.DateTimeFormatOptions) => new Date(value).toLocaleString(current === 'fr' ? 'fr-FR' : current === 'id' ? 'id-ID' : 'en-US', options)

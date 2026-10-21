@@ -6,7 +6,7 @@ import {
 describe('template catalog', () => {
   test('covers every template the roadmap names for TS-07', () => {
     // meeting minutes, interview notes, lecture notes, project briefs, PRDs, follow-up emails
-    expect(DOCUMENT_STYLES).toEqual(['notes', 'meeting', 'interview', 'lecture', 'brief', 'prd', 'email']);
+    expect(DOCUMENT_STYLES).toEqual(['notes', 'meeting', 'interview', 'lecture', 'brief', 'prd', 'email', 'meeting-id']);
   });
 
   test('keeps the three pre-existing styles so saved clients keep working', () => {

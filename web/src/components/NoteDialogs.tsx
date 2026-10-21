@@ -15,6 +15,7 @@ import { formatDate, t } from '@/i18n'
 const documentStyleLabels = (): [DocumentStyle, string][] => [
   ['notes', t('Structured notes')],
   ['meeting', t('Meeting minutes')],
+  ['meeting-id', t('Indonesian meeting minutes')],
   ['interview', t('Interview notes')],
   ['lecture', t('Lecture notes')],
   ['brief', t('Project brief')],

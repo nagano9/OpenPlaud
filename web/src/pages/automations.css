@@ -28,6 +28,8 @@
 .automation-pill[data-state="on"], .automation-pill[data-state="done"], .automation-pill[data-state="complete"], .automation-pill[data-state="delivered"], .automation-pill[data-state="created"], .automation-pill[data-state="approved"] { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 40%, transparent); background: color-mix(in srgb, var(--primary) 10%, transparent); }
 .automation-pill[data-state="failed"], .automation-pill[data-state="blocked"] { color: var(--destructive); border-color: color-mix(in srgb, var(--destructive) 40%, transparent); }
 .automation-pill[data-state="unknown"] { color: var(--neutral); border-color: color-mix(in srgb, var(--neutral) 50%, transparent); }
+.automation-pill.task-overdue { color: var(--destructive); border-color: color-mix(in srgb, var(--destructive) 40%, transparent); }
+.automation-pill.task-overdue svg { width: 12px; height: 12px; }
 .icon-flip { transform: rotate(180deg); }
 
 .rule-form { display: grid; gap: 12px; }
@@ -74,6 +76,8 @@
 .task-row[data-status="dismissed"] { opacity: .6; }
 .task-row > input { margin-top: 8px; }
 .task-fields { display: grid; gap: 6px; min-width: 0; }
+.task-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted-foreground); }
+.task-progress select { border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px; background: var(--background); color: inherit; font: inherit; font-size: 12px; }
 .task-meta { display: flex; flex-wrap: wrap; gap: 6px; }
 .task-meta a { color: inherit; text-decoration: underline; }
 .task-actions { display: grid; gap: 2px; justify-items: end; }

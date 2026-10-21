@@ -46,6 +46,15 @@ test('recurring topics come from tags and shared words across recent recordings 
   expect(topics.some(topic => ['the', 'lunch', 'hiring'].includes(topic.topic))).toBe(false);
 });
 
+test('long-recording suggestions send bounded excerpts including the final decision', async () => {
+  const recording = addRecording(database, { text: 'Pembukaan. ' + 'Pembahasan proyek. '.repeat(4000) + 'Keputusan akhir: peluncuran ditunda.' });
+  const calls: { url: string; body: any }[] = [];
+  const result = await service(provider('{"title":"Penundaan peluncuran","tags":["proyek"]}', calls)).suggestForRecording(recording.id, { consent: true });
+  expect(result.truncated).toBe(true);
+  expect(calls[0].body.messages[1].content).toContain('Keputusan akhir: peluncuran ditunda.');
+  expect(calls[0].body.messages[1].content.length).toBeLessThan(24500);
+});
+
 test('topic summaries cite exact passages and are previews only', async () => {
   const first = addRecording(database, { title: 'Sync 1', segments: [{ start: 12, end: 20, text: 'The hiring budget is frozen until March.' }] });
   addRecording(database, { title: 'Sync 2', text: 'Hiring resumes in April for two engineers.' });
