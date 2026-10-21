@@ -18,7 +18,10 @@ import java.util.concurrent.Executors
 @TauriPlugin(permissions = [
     Permission(alias = "bluetooth", strings = [Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT]),
     Permission(alias = "location", strings = [Manifest.permission.ACCESS_FINE_LOCATION]),
-    Permission(alias = "notifications", strings = [Manifest.permission.POST_NOTIFICATIONS])
+    Permission(alias = "notifications", strings = [Manifest.permission.POST_NOTIFICATIONS]),
+    Permission(alias = "bluetoothServer", strings = [Manifest.permission.BLUETOOTH_ADVERTISE, Manifest.permission.BLUETOOTH_CONNECT]),
+    Permission(alias = "audioRecordings", strings = [Manifest.permission.READ_MEDIA_AUDIO]),
+    Permission(alias = "storage", strings = [Manifest.permission.READ_EXTERNAL_STORAGE])
 ])
 class PlaudPlugin(private val activity: Activity) : Plugin(activity) {
     private val controller by lazy { DirectPlaudController.get(activity) }
@@ -105,5 +108,41 @@ class PlaudPlugin(private val activity: Activity) : Plugin(activity) {
             try { vault.configure(args.getString("origin"), args.getString("pairingToken")); val file = vault.exportAudio(File(activity.cacheDir, "document-exports"), args.getString("recordingId"), args.getString("filename")); main.post { guarded(invoke) { PlaudExports(activity).audio(file) } } }
             catch (e: Exception) { main.post { invoke.reject(e.message ?: "Audio export failed.") } }
         }
+    }
+
+    // Bluetooth sync: this phone serves its voice recordings to the paired desktop (PhoneBleServer).
+    private fun phoneBleValue(): JSObject {
+        val preferences = PhoneBleSyncService.preferences(activity)
+        return JSObject().put("enabled", preferences.getBoolean("enabled", false)).put("active", PhoneBleSyncService.active)
+            .put("status", PhoneBleSyncService.status).put("clientId", preferences.getString("clientId", null) ?: org.json.JSONObject.NULL)
+    }
+    private fun phoneBleAliases() = when {
+        Build.VERSION.SDK_INT >= 33 -> arrayOf("bluetoothServer", "audioRecordings", "notifications")
+        Build.VERSION.SDK_INT >= 31 -> arrayOf("bluetoothServer", "storage")
+        else -> arrayOf("storage")
+    }
+    @Command fun phoneBleStatus(invoke: Invoke) = invoke.resolve(phoneBleValue())
+    @Command fun phoneBleSync(invoke: Invoke) {
+        val args = invoke.getArgs()
+        if (!args.getBoolean("enabled")) {
+            PhoneBleSyncService.preferences(activity).edit().putBoolean("enabled", false).apply()
+            activity.stopService(Intent(activity, PhoneBleSyncService::class.java))
+            invoke.resolve(phoneBleValue()); return
+        }
+        val clientId = args.getString("clientId")
+        val token = args.getString("pairingToken")
+        if (clientId.isNullOrBlank() || token.isNullOrBlank()) { invoke.reject("Pair this phone with the desktop first."); return }
+        // The key is derived here and the token itself is not kept by the Bluetooth service.
+        PhoneBleSyncService.preferences(activity).edit().putString("clientId", clientId)
+            .putString("key", android.util.Base64.encodeToString(PhoneBleProtocol.key(token), android.util.Base64.NO_WRAP)).apply()
+        requestPermissionForAliases(phoneBleAliases(), invoke, "phoneBlePermissions")
+    }
+    @PermissionCallback fun phoneBlePermissions(invoke: Invoke) {
+        val missing = phoneBleAliases().filter { it != "notifications" && getPermissionState(it) != PermissionState.GRANTED }
+        if (missing.isNotEmpty()) { invoke.reject(if ("bluetoothServer" in missing) "Allow Nearby devices so the desktop can find this phone." else "Allow access to audio so the desktop can copy your recordings."); return }
+        PhoneBleSyncService.preferences(activity).edit().putBoolean("enabled", true).apply()
+        val intent = Intent(activity, PhoneBleSyncService::class.java)
+        if (Build.VERSION.SDK_INT >= 26) activity.startForegroundService(intent) else activity.startService(intent)
+        invoke.resolve(phoneBleValue())
     }
 }

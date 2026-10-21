@@ -11,6 +11,7 @@ import { OutboxPanel } from '@/components/OutboxPanel'
 import { formatDuration } from '@/lib/utils'
 import { completePendingAndroidShare, readPendingAndroidShare } from '@/lib/android-share'
 import { formatDate, t } from '@/i18n'
+import { useAudioInputs } from '@/lib/audio-inputs'
 
 type CaptureState = 'idle' | 'requesting' | 'recording' | 'paused' | 'review' | 'uploading' | 'stored'
 
@@ -28,6 +29,7 @@ export function RecordingPage() {
   const [error, setError] = useState('')
   const [progress, setProgress] = useState<number | null>(null)
   const [outboxVersion, setOutboxVersion] = useState(0)
+  const { inputs, inputId, chooseInput, refreshInputs } = useAudioInputs()
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const chunksRef = useRef<Blob[]>([])
@@ -133,9 +135,17 @@ export function RecordingPage() {
     setState('requesting')
     setError('')
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      })
+      const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      let stream: MediaStream
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: inputId ? { ...audio, deviceId: { exact: inputId } } : audio })
+      } catch (failure) {
+        // A chosen headset that was switched off or unpaired: record with the default microphone instead.
+        if (!inputId || (failure as DOMException).name !== 'OverconstrainedError' && (failure as DOMException).name !== 'NotFoundError') throw failure
+        chooseInput('')
+        stream = await navigator.mediaDevices.getUserMedia({ audio })
+      }
+      void refreshInputs()
       streamRef.current = stream
       const mimeType = preferredMimeType()
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
@@ -283,6 +293,13 @@ export function RecordingPage() {
             <button className="record-trigger" type="button" onClick={() => void startRecording()} disabled={state === 'requesting'} aria-label={t('Start recording')}>
               {state === 'requesting' ? <Loader2 className="animate-spin" /> : <Mic />}
             </button>
+            {inputs.length > 1 && <label className="capture-input">{t('Microphone')}
+              <select value={inputId} disabled={state === 'requesting'} onChange={event => chooseInput(event.target.value)}>
+                <option value="">{t('System default')}</option>
+                {inputs.map((input, index) => <option key={input.deviceId} value={input.deviceId}>{input.label || t('Microphone {number}', { number: index + 1 })}</option>)}
+              </select>
+              <small>{t('Bluetooth headsets and earbuds appear here once paired with this device.')}</small>
+            </label>}
             <div className="capture-import-option"><span>{t('or')}</span><PlaudImportDialog variant="outline" /></div>
             <OutboxPanel fromMobile={runtime.mode === 'mobile'} refreshKey={outboxVersion} />
           </div>

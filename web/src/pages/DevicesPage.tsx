@@ -6,6 +6,8 @@ import { deviceCommand, supportsPlaudDevice, vaultArguments, type DeviceSnapshot
 import { formatDuration } from '@/lib/utils'
 import { DesktopPlaud } from './DesktopPlaud'
 import { PhoneAuthorization } from '@/components/PlaudAuthorization'
+import { BluetoothSources } from '@/components/BluetoothSources'
+import { PhoneBluetoothSync } from '@/components/PhoneBluetoothSync'
 import { formatDate, t } from '@/i18n'
 
 export function DevicesPage() {
@@ -100,11 +102,12 @@ export function DevicesPage() {
       : snapshot?.state === 'scanning' ? t('Searching nearby...')
         : snapshot?.state === 'authenticating' ? t('Verifying device authorization...') : t('Disconnected')
 
-  if (!supported) return <DesktopPlaud />
+  if (!supported) return <><DesktopPlaud /><BluetoothSources /></>
 
   return <div className="device-page">
     <header className="device-heading"><div><h1>Plaud</h1><p>Note Pro</p></div><Bluetooth aria-hidden="true" /></header>
     <>
+      <PhoneBluetoothSync />
       {snapshot && !snapshot.configured && <PhoneAuthorization onDone={() => void refresh()} />}
       <section className="device-connection" aria-label={t('Plaud connection')}>
         <div><h2>{status}</h2><p>{snapshot?.serial || 'Plaud Note Pro'}{snapshot?.battery != null ? ` · ${t('{percent}% battery', { percent: snapshot.battery })}` : ''}</p></div>

@@ -1,0 +1,23 @@
+.bt-sources { display: grid; gap: 14px; margin: 24px auto 0; max-width: 1100px; padding: 0 16px 32px; }
+.bt-sources-heading { display: flex; align-items: center; gap: 12px; }
+.bt-sources-heading > svg { width: 22px; height: 22px; color: var(--primary); }
+.bt-sources-heading h2 { font-size: 18px; font-weight: 600; }
+.bt-sources-heading p { color: var(--muted-foreground); font-size: 13px; }
+.bt-source-card { display: grid; gap: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 16px; background: var(--card); }
+.bt-source-card > header { display: flex; align-items: center; gap: 10px; }
+.bt-source-card > header svg { width: 20px; height: 20px; color: var(--primary); }
+.bt-source-card h3 { font-size: 15px; font-weight: 600; }
+.bt-source-card small { display: block; color: var(--muted-foreground); font-size: 12px; }
+.bt-toggle { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.bt-toggle input { margin-top: 3px; }
+.bt-toggle strong { display: block; font-size: 13px; font-weight: 500; }
+.bt-path { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.bt-path label { display: grid; gap: 4px; flex: 1 1 260px; font-size: 12px; color: var(--muted-foreground); }
+.bt-path input { min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; background: var(--background); color: var(--foreground); font-size: 13px; }
+.bt-steps { display: grid; gap: 4px; padding-left: 18px; list-style: decimal; color: var(--muted-foreground); font-size: 13px; line-height: 1.5; }
+.bt-events { display: grid; gap: 4px; font-size: 13px; }
+.bt-events li { display: flex; align-items: center; gap: 6px; }
+.bt-events svg { width: 14px; height: 14px; color: var(--positive); }
+.bt-events a, .bt-note a { color: var(--primary); text-decoration: underline; }
+.bt-note { color: var(--muted-foreground); font-size: 13px; }
+.bt-error { color: var(--destructive); font-size: 13px; overflow-wrap: anywhere; }

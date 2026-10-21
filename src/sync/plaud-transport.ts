@@ -20,12 +20,15 @@ export class PlaudTransport {
   private closing: Promise<void> | null = null;
   readonly metadata: Record<string, string> = {};
 
+  /** `profileArgs` select another device's GATT channel on the native bridge (see `--service`). */
   constructor(identifier: string, bridge = defaultBridgeSpec(),
-    launch: (command: string[]) => PlaudBridgeProcess = command => Bun.spawn(command, { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' })) {
+    launch: (command: string[]) => PlaudBridgeProcess = command => Bun.spawn(command, { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' }),
+    profileArgs: string[] = []) {
     if (!isBluetoothIdentifier(identifier)) throw new Error('Invalid Bluetooth device identifier');
+    if (profileArgs.length && bridge.endsWith('.swift')) throw new Error('The Swift Bluetooth helper only supports Plaud. Use the native bridge.');
     // A `.swift` bridge runs under the Swift interpreter; the native bridge takes a
     // `connect` sub-command.
-    const command = bridge.endsWith('.swift') ? ['swift', bridge, identifier] : [bridge, 'connect', identifier];
+    const command = bridge.endsWith('.swift') ? ['swift', bridge, identifier] : [bridge, 'connect', identifier, ...profileArgs];
     this.child = launch(command);
     const lines = createInterface({ input: Readable.fromWeb(this.child.stdout as never) });
     lines.on('line', line => {

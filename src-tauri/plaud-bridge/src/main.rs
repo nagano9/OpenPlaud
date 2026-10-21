@@ -51,6 +51,64 @@ const WRITE_UUID: Uuid = Uuid::from_u128(0x00002bb1_0000_1000_8000_00805f9b34fb)
 /// Advertised name fragment used to recognise a recorder.
 const NAME_HINT: &str = "plaud";
 
+/// The GATT command channel of one kind of recorder.  The default is the Plaud
+/// Note Pro; `--service/--notify/--write/--name-hint` select another device (for
+/// example a paired phone running OpenPlod), so the bridge stays a generic
+/// write/notify pipe and each device's protocol lives in the vault.
+#[derive(Clone, Debug)]
+struct Profile {
+    service: Uuid,
+    notify: Uuid,
+    write: Uuid,
+    name_hint: Option<String>,
+    /// Only the Plaud profile parses the Note Pro advertisement.
+    plaud: bool,
+}
+
+impl Profile {
+    fn plaud() -> Self {
+        Profile { service: SERVICE_UUID, notify: NOTIFY_UUID, write: WRITE_UUID, name_hint: Some(NAME_HINT.to_string()), plaud: true }
+    }
+
+    fn label(&self) -> &'static str {
+        if self.plaud { "Plaud" } else { "device" }
+    }
+}
+
+/// Splits `args` (after the mode) into positional values and a device profile.
+fn parse_profile(args: &[String]) -> Result<(Vec<String>, Profile), String> {
+    let mut profile = Profile::plaud();
+    let mut custom = false;
+    let mut positional = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        if !flag.starts_with("--") {
+            positional.push(args[index].clone());
+            index += 1;
+            continue;
+        }
+        let value = args.get(index + 1).ok_or_else(|| format!("{flag} needs a value"))?;
+        let uuid = || Uuid::parse_str(value).map_err(|_| format!("{flag} is not a UUID"));
+        match flag {
+            "--service" => profile.service = uuid()?,
+            "--notify" => profile.notify = uuid()?,
+            "--write" => profile.write = uuid()?,
+            "--name-hint" => profile.name_hint = Some(value.to_ascii_lowercase()).filter(|hint| !hint.is_empty()),
+            _ => return Err(format!("unknown option {flag}")),
+        }
+        custom = true;
+        index += 2;
+    }
+    if custom {
+        profile.plaud = false;
+        if profile.name_hint.as_deref() == Some(NAME_HINT) {
+            profile.name_hint = None;
+        }
+    }
+    Ok((positional, profile))
+}
+
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(35);
 /// A cold BlueZ cache makes the first connect-and-discover of an unbonded
 /// recorder far slower than a warm one, so the probe allows the same budget the
@@ -77,15 +135,22 @@ fn main() {
             std::process::exit(1);
         }
     };
+    let (positional, profile) = match parse_profile(args.get(2..).unwrap_or(&[])) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            eprintln!("plaud-bridge: {error}");
+            std::process::exit(2);
+        }
+    };
     let result = match mode {
         "doctor" => runtime.block_on(run_doctor()),
-        "scan" => runtime.block_on(run_scan()),
+        "scan" => runtime.block_on(run_scan(&profile)),
         "connect" => {
-            let identifier = args.get(2).cloned().unwrap_or_default();
-            runtime.block_on(run_connect(identifier))
+            let identifier = positional.first().cloned().unwrap_or_default();
+            runtime.block_on(run_connect(identifier, &profile))
         }
         _ => {
-            eprintln!("usage: plaud-bridge <doctor|scan|connect> [identifier]");
+            eprintln!("usage: plaud-bridge <doctor|scan|connect> [identifier] [--service UUID --notify UUID --write UUID --name-hint NAME]");
             std::process::exit(2);
         }
     };
@@ -117,13 +182,12 @@ fn normalize_identifier(value: &str) -> String {
         .to_ascii_lowercase()
 }
 
-fn is_plaud(properties: &PeripheralProperties) -> bool {
-    let named = properties
-        .local_name
-        .as_deref()
-        .map(|name| name.to_ascii_lowercase().contains(NAME_HINT))
-        .unwrap_or(false);
-    let advertised = properties.services.contains(&SERVICE_UUID);
+fn matches_profile(properties: &PeripheralProperties, profile: &Profile) -> bool {
+    let named = match (&profile.name_hint, properties.local_name.as_deref()) {
+        (Some(hint), Some(name)) => name.to_ascii_lowercase().contains(hint.as_str()),
+        _ => false,
+    };
+    let advertised = properties.services.contains(&profile.service);
     named || advertised
 }
 
@@ -133,6 +197,7 @@ async fn find_peripheral(
     adapter: &Adapter,
     identifier: &str,
     timeout: Duration,
+    profile: &Profile,
 ) -> Result<Option<Peripheral>, String> {
     adapter
         .start_scan(ScanFilter::default())
@@ -160,7 +225,7 @@ async fn find_peripheral(
             }
             if fallback.is_none() {
                 if let Some(properties) = peripheral.properties().await.ok().flatten() {
-                    if is_plaud(&properties) {
+                    if matches_profile(&properties, profile) {
                         fallback = Some(peripheral);
                     }
                 }
@@ -225,9 +290,9 @@ async fn run_doctor() -> Result<(), String> {
     Ok(())
 }
 
-async fn run_scan() -> Result<(), String> {
+async fn run_scan(profile: &Profile) -> Result<(), String> {
     let adapter = adapter().await?;
-    let found = find_peripheral(&adapter, "", SCAN_TIMEOUT).await?;
+    let found = find_peripheral(&adapter, "", SCAN_TIMEOUT, profile).await?;
     let probe = match found {
         None => json!({
             "detected": false,
@@ -238,7 +303,11 @@ async fn run_scan() -> Result<(), String> {
             "rssi": null,
             "manufacturerData": [],
             "connectionVerified": false,
-            "detail": "No advertising Plaud found. Wake the device and keep it near this computer.",
+            "detail": if profile.plaud {
+                "No advertising Plaud found. Wake the device and keep it near this computer."
+            } else {
+                "No advertising device found. Open the app on the device and keep it near this computer."
+            },
         }),
         Some(peripheral) => {
             let address = peripheral.address().to_string();
@@ -246,7 +315,7 @@ async fn run_scan() -> Result<(), String> {
             let name = properties
                 .as_ref()
                 .and_then(|properties| properties.local_name.clone())
-                .unwrap_or_else(|| "Plaud".to_string());
+                .unwrap_or_else(|| profile.label().to_string());
             let rssi = properties.as_ref().and_then(|properties| properties.rssi);
             // Company-id keyed manufacturer payloads.  `btleplug` strips the
             // two company-identifier bytes that CoreBluetooth keeps, so they are
@@ -267,8 +336,12 @@ async fn run_scan() -> Result<(), String> {
                         .collect()
                 })
                 .unwrap_or_default();
-            let (serial, protocol_version) = parse_note_pro_advertisement(&manufacturer_data);
-            let verified = verify_connection(&peripheral).await;
+            let (serial, protocol_version) = if profile.plaud {
+                parse_note_pro_advertisement(&manufacturer_data)
+            } else {
+                (None, None)
+            };
+            let verified = verify_connection(&peripheral, profile).await;
             let _ = peripheral.disconnect().await;
             json!({
                 "detected": true,
@@ -279,10 +352,10 @@ async fn run_scan() -> Result<(), String> {
                 "rssi": rssi,
                 "manufacturerData": manufacturer_data,
                 "connectionVerified": verified,
-                "detail": if verified {
-                    "Bluetooth connection verified. Recording access is not authenticated."
-                } else {
-                    "Plaud detected, but the Bluetooth connection failed. Retry with other Plaud clients disconnected."
+                "detail": match (verified, profile.plaud) {
+                    (true, _) => "Bluetooth connection verified. Recording access is not authenticated.",
+                    (false, true) => "Plaud detected, but the Bluetooth connection failed. Retry with other Plaud clients disconnected.",
+                    (false, false) => "Device detected, but the Bluetooth connection failed. Keep the app open on the device and retry.",
                 },
             })
         }
@@ -321,7 +394,7 @@ fn parse_note_pro_advertisement(manufacturer_data: &[Value]) -> (Option<String>,
     (None, None)
 }
 
-async fn verify_connection(peripheral: &Peripheral) -> bool {
+async fn verify_connection(peripheral: &Peripheral, profile: &Profile) -> bool {
     if !matches!(
         tokio::time::timeout(VERIFY_TIMEOUT, peripheral.connect()).await,
         Ok(Ok(()))
@@ -337,10 +410,10 @@ async fn verify_connection(peripheral: &Peripheral) -> bool {
     peripheral
         .services()
         .iter()
-        .any(|service| service.uuid == SERVICE_UUID)
+        .any(|service| service.uuid == profile.service)
 }
 
-async fn run_connect(identifier: String) -> Result<(), String> {
+async fn run_connect(identifier: String, profile: &Profile) -> Result<(), String> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
     tokio::spawn(async move {
         while let Some(value) = rx.recv().await {
@@ -354,7 +427,7 @@ async fn run_connect(identifier: String) -> Result<(), String> {
     });
 
     let adapter = adapter().await?;
-    let peripheral = find_peripheral(&adapter, &identifier, SCAN_TIMEOUT)
+    let peripheral = find_peripheral(&adapter, &identifier, SCAN_TIMEOUT, profile)
         .await?
         .ok_or_else(|| "connection_timeout".to_string())?;
 
@@ -379,18 +452,19 @@ async fn run_connect(identifier: String) -> Result<(), String> {
     if !peripheral
         .services()
         .iter()
-        .any(|service| service.uuid == SERVICE_UUID)
+        .any(|service| service.uuid == profile.service)
     {
         emit(&tx, json!({ "event": "closed", "reason": "missing_command_service" }));
         return Ok(());
     }
+    let notify_uuid = profile.notify;
     let notify = characteristics
         .iter()
-        .find(|characteristic| characteristic.uuid == NOTIFY_UUID)
+        .find(|characteristic| characteristic.uuid == notify_uuid)
         .cloned();
     let writer = characteristics
         .iter()
-        .find(|characteristic| characteristic.uuid == WRITE_UUID)
+        .find(|characteristic| characteristic.uuid == profile.write)
         .cloned();
     let (Some(notify), Some(writer)) = (notify, writer) else {
         emit(&tx, json!({ "event": "closed", "reason": "missing_command_characteristics" }));
@@ -408,7 +482,7 @@ async fn run_connect(identifier: String) -> Result<(), String> {
             let tx = tx.clone();
             tokio::spawn(async move {
                 while let Some(notification) = notifications.next().await {
-                    let is_packet = notification.uuid == NOTIFY_UUID;
+                    let is_packet = notification.uuid == notify_uuid;
                     emit(
                         &tx,
                         json!({
@@ -557,4 +631,43 @@ fn decode_private_key(bytes: &[u8]) -> Result<RsaPrivateKey, String> {
     RsaPrivateKey::from_pkcs1_der(bytes)
         .or_else(|_| RsaPrivateKey::from_pkcs8_der(bytes))
         .map_err(|_| "invalid RSA private key".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn default_profile_is_plaud() {
+        let (positional, profile) = parse_profile(&strings(&["AA:BB:CC:DD:EE:FF"])).unwrap();
+        assert_eq!(positional, vec!["AA:BB:CC:DD:EE:FF"]);
+        assert!(profile.plaud);
+        assert_eq!(profile.service, SERVICE_UUID);
+    }
+
+    #[test]
+    fn custom_profile_replaces_uuids_and_drops_the_plaud_name_hint() {
+        let (positional, profile) = parse_profile(&strings(&[
+            "--service", "7f1e0001-5c6a-4b8e-9d1a-0a9e0f9c4f10",
+            "--notify", "7f1e0002-5c6a-4b8e-9d1a-0a9e0f9c4f10",
+            "--write", "7f1e0003-5c6a-4b8e-9d1a-0a9e0f9c4f10",
+            "11:22:33:44:55:66",
+        ]))
+        .unwrap();
+        assert_eq!(positional, vec!["11:22:33:44:55:66"]);
+        assert!(!profile.plaud);
+        assert_eq!(profile.name_hint, None);
+        assert_eq!(profile.write.to_string(), "7f1e0003-5c6a-4b8e-9d1a-0a9e0f9c4f10");
+    }
+
+    #[test]
+    fn bad_options_are_rejected() {
+        assert!(parse_profile(&strings(&["--service"])).is_err());
+        assert!(parse_profile(&strings(&["--service", "not-a-uuid"])).is_err());
+        assert!(parse_profile(&strings(&["--colour", "blue"])).is_err());
+    }
 }

@@ -18,10 +18,16 @@ import { TranscriptionRouter } from './transcription/router';
 import { db, sqlite } from './db/client';
 import { OrganizerStore } from './organizer/store';
 import { createOrganizerApi } from './api/organizer';
-import { apiAccess, credentialsConfigured } from './api/access';
+import { apiAccess, credentialsConfigured, mobileClients } from './api/access';
 import { RecordingAi } from './organizer/recording-ai';
 import { createRecordingAiApi } from './api/recording-ai';
 import { automaticPlaud } from './api/plaud';
+import { createDevicesApi } from './api/devices';
+import { DeviceRegistry } from './devices/registry';
+import { BluetoothInbox } from './devices/bluetooth-inbox';
+import { DeviceAutoImport } from './devices/auto-import';
+import { phoneDriver } from './devices/phone/driver';
+import { queueRecordingProcessing } from './library/processing';
 import { recordings, userSettings } from './db/schema';
 import { eq } from 'drizzle-orm';
 import { searchTranscripts } from './search/transcripts';
@@ -208,6 +214,11 @@ app.route('/api/ai', createRecordingAiApi(new RecordingAi(organizer, undefined, 
   (query, { limit, signal }) => knowledgeIndex.search({ q: query.slice(0, 500), mode: 'hybrid', source: 'transcripts', limit }, { signal }))));
 app.route('/api/ai-settings', createAiSettingsApi(sqlite));
 app.route('/api/vault', createVaultApi(sqlite));
+const devices = new DeviceRegistry();
+devices.register(automaticPlaud);
+devices.register(new DeviceAutoImport(sqlite, phoneDriver({ clients: mobileClients, queue: queueRecordingProcessing })));
+const bluetoothInbox = new BluetoothInbox(sqlite, queueRecordingProcessing);
+app.route('/api/devices', createDevicesApi(devices, bluetoothInbox));
 app.route('/api/onboarding', createOnboardingApi(sqlite, () => new TranscriptionRouter({}, readSettings(sqlite)).status()));
 
 // Settings
@@ -317,7 +328,8 @@ async function startFolderSync() {
 }
 
 void startFolderSync().catch(error => console.error('[Startup] Folder sync failed:', error));
-setInterval(() => { void automaticPlaud.tick(); }, 60000).unref();
+setInterval(() => { void devices.tick(); }, 60000).unref();
+void bluetoothInbox.start().catch(error => console.error('[BluetoothInbox] Could not start:', error));
 // 30-day Trash retention must hold for a long-running server too, not only at startup.
 function purgeTrash() {
   try { organizer.purgeExpired(); } catch (error) { console.error('[Retention] Note trash purge failed:', error); }

@@ -11,14 +11,18 @@ import { recordings, transcripts, userSettings } from '../db/schema';
 import { and, eq, or } from 'drizzle-orm';
 
 export const AUDIO_EXTENSIONS = new Set(['.mp3', '.m4a', '.wav', '.ogg', '.webm', '.aac', '.flac']);
+/** Phone recorder formats that are converted to M4A before import (see `convertForImport`). */
+export const CONVERTIBLE_AUDIO_EXTENSIONS = new Set(['.opus', '.amr', '.3gp', '.3ga', '.m4b', '.wma', '.mp4']);
 export const TRASH_RETENTION_DAYS = 30;
 
 export class RecordingImportConflict extends Error {}
 
 export type RecordingProvenance = {
-  sourceProvider: 'plaud' | 'opennotes' | 'upload';
+  /** `phone`: a paired phone; `device`: another Bluetooth recorder or a file a phone sent over Bluetooth. */
+  sourceProvider: 'plaud' | 'opennotes' | 'upload' | 'phone' | 'device';
   sourceRecordingId?: string | null;
-  sourceTransport: 'export' | 'folder' | 'mobile' | 'upload' | 'ble' | 'cloud';
+  /** `bluetooth-file`: received through the operating system's Bluetooth file transfer. */
+  sourceTransport: 'export' | 'folder' | 'mobile' | 'upload' | 'ble' | 'cloud' | 'bluetooth-file';
   recordedAt?: string | null;
 };
 
@@ -42,6 +46,29 @@ export async function fingerprintFile(filePath: string): Promise<string> {
 
 export function isSupportedAudio(filePath: string): boolean {
   return AUDIO_EXTENSIONS.has(extname(filePath).toLowerCase());
+}
+
+export function isConvertibleAudio(filePath: string): boolean {
+  return CONVERTIBLE_AUDIO_EXTENSIONS.has(extname(filePath).toLowerCase());
+}
+
+/**
+ * Converts a phone-recorder format (AMR, 3GP, Opus...) to AAC/M4A with ffmpeg so every
+ * provider and the player can read it. Returns the path of a new file in `directory`.
+ */
+export async function convertForImport(sourcePath: string, directory: string): Promise<string> {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const output = join(directory, `${crypto.randomUUID()}.m4a`);
+  const child = Bun.spawn(['ffmpeg', '-v', 'error', '-xerror', '-n', '-i', sourcePath, '-map', '0:a:0', '-c:a', 'aac', '-b:a', '128k', output], { stdout: 'ignore', stderr: 'pipe' });
+  const timer = setTimeout(() => child.kill(), 10 * 60000);
+  try {
+    const stderr = await new Response(child.stderr).text();
+    if (await child.exited !== 0) {
+      await unlink(output).catch(() => undefined);
+      throw new Error(`Could not convert ${basename(sourcePath)} to M4A: ${stderr.trim().split('\n').at(-1) || 'ffmpeg failed'}. Is ffmpeg installed?`);
+    }
+    return output;
+  } finally { clearTimeout(timer); }
 }
 
 /** Staging directory used while an incoming file is imported into the vault. */

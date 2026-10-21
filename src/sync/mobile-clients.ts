@@ -142,6 +142,24 @@ export class MobileClientStore {
     return toClient(row);
   }
 
+  /**
+   * The key a paired phone and this desktop prove themselves with over Bluetooth: SHA-256 of
+   * the phone's token, which both sides hold without the token itself crossing the radio.
+   * Only active per-client credentials allowed to upload qualify.
+   */
+  bluetoothKey(id: string): { client: MobileClient; key: Buffer } | null {
+    const row = this.row(id);
+    if (!row || row.legacy === 1 || row.revoked_at || !/^[0-9a-f]{64}$/.test(row.token_hash)) return null;
+    const client = toClient(row);
+    if (!client.permissions.includes('upload')) return null;
+    return { client, key: Buffer.from(row.token_hash, 'hex') };
+  }
+
+  /** Active per-client credentials that can sync over Bluetooth. */
+  bluetoothClients(): MobileClient[] {
+    return this.list().filter(client => this.bluetoothKey(client.id) !== null);
+  }
+
   /** Records an authenticated request. Throttled so ordinary browsing does not write on every call. */
   touch(client: MobileClient): void {
     const now = this.now();
