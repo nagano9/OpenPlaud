@@ -18,6 +18,9 @@ export class DeviceAutoImport {
     // Events predate other drivers; existing rows belong to Plaud.
     const columns = database.query('PRAGMA table_info(plaud_import_events)').all() as { name: string }[];
     if (!columns.some(column => column.name === 'driver')) database.exec("ALTER TABLE plaud_import_events ADD COLUMN driver TEXT NOT NULL DEFAULT 'plaud'");
+    // A device recording whose audio was already in the vault (e.g. also uploaded over Wi-Fi) is a
+    // duplicate with no source id of its own; remembering it stops a download on every poll.
+    database.exec('CREATE TABLE IF NOT EXISTS device_handled_sources (driver TEXT NOT NULL, source_id TEXT NOT NULL, handled_at TEXT NOT NULL, PRIMARY KEY (driver, source_id))');
   }
   enabled() { return (this.database.query('SELECT value FROM user_settings WHERE key=?').get(this.settingKey) as { value: string } | null)?.value === 'true'; }
   set(enabled: boolean) {
@@ -38,13 +41,15 @@ export class DeviceAutoImport {
       const existing = new Set((this.database.query(
         'SELECT source_recording_id AS sourceId FROM recordings WHERE source_provider=? AND source_recording_id IS NOT NULL',
       ).all(this.driver.provider) as { sourceId: string }[]).map(row => row.sourceId));
+      for (const row of this.database.query('SELECT source_id AS sourceId FROM device_handled_sources WHERE driver=?').all(this.driver.id) as { sourceId: string }[]) existing.add(row.sourceId);
       for (const session of result.sessions) {
         const source = sourceRecordingId(result, session); observed.set(source, session.size);
         if (!this.enabled()) break;
         if (session.size <= 512 || this.previous.get(source) !== session.size) continue;
         if (existing.has(source)) continue;
         const imported = await this.driver.import(session.sessionId);
-        if (imported.added || imported.recording.sourceRecordingId === source) existing.add(source);
+        existing.add(source);
+        if (!imported.added && imported.recording.sourceRecordingId !== source) this.database.query('INSERT OR IGNORE INTO device_handled_sources(driver,source_id,handled_at) VALUES(?,?,?)').run(this.driver.id, source, new Date().toISOString());
         if (imported.added) this.database.query('INSERT INTO plaud_import_events(recording_id,created_at,driver) VALUES(?,?,?)').run(imported.recording.id, new Date().toISOString(), this.driver.id);
       }
       this.previous = observed; this.failures = 0; this.error = null; this.retryAt = 0;

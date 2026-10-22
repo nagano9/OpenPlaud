@@ -47,7 +47,8 @@ export function PhoneBluetoothSync() {
         {state?.enabled && <small role="status">{state.status}</small>}
       </span>
     </label>
-    {state?.enabled && <p className="device-muted">{t('The first time, Android asks to pair with your computer. Accept it on both devices.')}</p>}
+    {state?.enabled && <p className="device-muted">{t('No Bluetooth pairing dialog is needed: your computer proves it is the desktop this phone is paired with, and recordings travel encrypted.')}</p>}
+    {state?.enabled && <p className="device-muted">{t('Recording not picked up? Some recorder apps (such as Xiaomi’s) keep files private. Open the recording, tap Share, and choose OpenPlod: it joins the Bluetooth queue.')}</p>}
     {error && <p className="device-error" role="alert">{error}</p>}
   </section>
 }

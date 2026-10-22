@@ -19,8 +19,8 @@ import java.util.concurrent.Executors
  * Serves this phone's voice recordings to the paired OpenPlod desktop over Bluetooth LE
  * (protocol in [PhoneBleProtocol]). The phone advertises the OpenPlod Phone service; the
  * desktop connects, both sides prove the pairing key, then the desktop lists recordings and
- * reads them in checksummed chunks. Both characteristics require an encrypted (bonded) link,
- * so Android asks to pair the first time the desktop connects. Nothing is ever deleted.
+ * reads them in checksummed chunks sealed with a per-session key. No Bluetooth pairing dialog is
+ * needed. Nothing is ever deleted.
  */
 @SuppressLint("MissingPermission")
 class PhoneBleServer(private val context: Context, private val clientId: String, private val key: ByteArray) {
@@ -38,7 +38,9 @@ class PhoneBleServer(private val context: Context, private val clientId: String,
     private var desktopNonce = ""
     private var phoneNonce = ""
     private var authenticated = false
+    private var sessionKey = ByteArray(0)
     private val prepared = HashMap<String, ByteArray>()
+    private val mtus = HashMap<String, Int>()
     @Volatile var lastEvent: String = "Waiting for the desktop"
         private set
 
@@ -52,9 +54,11 @@ class PhoneBleServer(private val context: Context, private val clientId: String,
         val advertiser = adapter.bluetoothLeAdvertiser ?: error("This phone cannot advertise over Bluetooth LE.")
         val gatt = manager.openGattServer(context, callback) ?: error("Bluetooth server could not start.")
         val service = BluetoothGattService(PhoneBleProtocol.SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
-        val replies = BluetoothGattCharacteristic(PhoneBleProtocol.NOTIFY_UUID, BluetoothGattCharacteristic.PROPERTY_NOTIFY, BluetoothGattCharacteristic.PERMISSION_READ_ENCRYPTED)
-        replies.addDescriptor(BluetoothGattDescriptor(PhoneBleProtocol.CCCD_UUID, BluetoothGattDescriptor.PERMISSION_READ_ENCRYPTED or BluetoothGattDescriptor.PERMISSION_WRITE_ENCRYPTED))
-        val requests = BluetoothGattCharacteristic(PhoneBleProtocol.WRITE_UUID, BluetoothGattCharacteristic.PROPERTY_WRITE, BluetoothGattCharacteristic.PERMISSION_WRITE_ENCRYPTED)
+        // No OS-level bonding: Windows does not pair a phone's rotating LE address on its own, so the
+        // app authenticates both sides and seals private data itself (PhoneBleProtocol).
+        val replies = BluetoothGattCharacteristic(PhoneBleProtocol.NOTIFY_UUID, BluetoothGattCharacteristic.PROPERTY_NOTIFY, BluetoothGattCharacteristic.PERMISSION_READ)
+        replies.addDescriptor(BluetoothGattDescriptor(PhoneBleProtocol.CCCD_UUID, BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE))
+        val requests = BluetoothGattCharacteristic(PhoneBleProtocol.WRITE_UUID, BluetoothGattCharacteristic.PROPERTY_WRITE, BluetoothGattCharacteristic.PERMISSION_WRITE)
         service.addCharacteristic(replies); service.addCharacteristic(requests)
         gatt.addService(service)
         server = gatt; notify = replies
@@ -74,22 +78,39 @@ class PhoneBleServer(private val context: Context, private val clientId: String,
 
     private val callback = object : BluetoothGattServerCallback() {
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
+            // Android reports every LE link to the phone here (watches, earbuds, other apps' peers),
+            // not only links to this service, so a connection alone never makes a device the desktop
+            // and nothing is ever disconnected from here.
             synchronized(lock) {
-                if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    // One desktop at a time: a second central is turned away.
-                    if (central != null && central?.address != device.address) { server?.cancelConnection(device); return }
-                    central = device; authenticated = false; frameBytes = 20; pending.clear(); sending = false
-                    lastEvent = "Desktop connected"
-                } else if (central?.address == device.address) {
-                    central = null; authenticated = false; pending.clear(); sending = false
-                    lastEvent = "Desktop disconnected"
+                if (newState != BluetoothProfile.STATE_CONNECTED) {
+                    mtus.remove(device.address)
+                    if (central?.address == device.address) {
+                        central = null; authenticated = false; pending.clear(); sending = false
+                        lastEvent = "Desktop disconnected"
+                    }
                 }
             }
         }
 
-        override fun onMtuChanged(device: BluetoothDevice, mtu: Int) { synchronized(lock) { frameBytes = (mtu - 3).coerceIn(20, 509) } }
+        override fun onMtuChanged(device: BluetoothDevice, mtu: Int) {
+            synchronized(lock) {
+                mtus[device.address] = mtu
+                if (central?.address == device.address) frameBytes = (mtu - 3).coerceIn(20, 509)
+            }
+        }
 
         override fun onDescriptorWriteRequest(device: BluetoothDevice, requestId: Int, descriptor: BluetoothGattDescriptor, preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray) {
+            // Subscribing to OpenPlod replies is what makes a device the desktop of this session.
+            // The newest subscriber wins and must authenticate again; a stale one cannot block it.
+            if (descriptor.uuid == PhoneBleProtocol.CCCD_UUID && descriptor.characteristic.uuid == PhoneBleProtocol.NOTIFY_UUID) synchronized(lock) {
+                if (value.isNotEmpty() && value[0].toInt() != 0) {
+                    central = device; authenticated = false; sessionKey = ByteArray(0); pending.clear(); sending = false
+                    frameBytes = ((mtus[device.address] ?: 23) - 3).coerceIn(20, 509)
+                    lastEvent = "Desktop connected"
+                } else if (central?.address == device.address) {
+                    central = null; authenticated = false; pending.clear(); sending = false
+                }
+            }
             if (responseNeeded) server?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value)
         }
 
@@ -129,7 +150,7 @@ class PhoneBleServer(private val context: Context, private val clientId: String,
                 }
                 "auth" -> {
                     val ok = desktopNonce.isNotEmpty() && PhoneBleProtocol.verify(key, "desktop", desktopNonce, phoneNonce, request.optString("proof"))
-                    synchronized(lock) { authenticated = ok }
+                    synchronized(lock) { authenticated = ok; sessionKey = if (ok) PhoneBleProtocol.sessionKey(key, desktopNonce, phoneNonce) else ByteArray(0) }
                     lastEvent = if (ok) "Syncing with the desktop" else "A desktop failed to prove its pairing"
                     reply(device, if (ok) JSONObject().put("op", "ready") else PhoneBleProtocol.error("auth", "This desktop is not the one this phone is paired with"))
                 }
@@ -137,11 +158,15 @@ class PhoneBleServer(private val context: Context, private val clientId: String,
                 else -> {
                     if (!authenticated) { reply(device, PhoneBleProtocol.error("auth", "Not authenticated")); return }
                     when (request.optString("op")) {
-                        "list" -> reply(device, JSONObject().put("op", "list").put("recordings", recordings.json(recordings.list())))
+                        "list" -> {
+                            val sealed = PhoneBleProtocol.seal(sessionKey, recordings.json(recordings.list()).toString().toByteArray(Charsets.UTF_8), random)
+                            reply(device, JSONObject().put("op", "list").put("sealed", Base64.encodeToString(sealed, Base64.NO_WRAP)))
+                        }
                         "get" -> {
                             val id = request.getLong("id"); val offset = request.getLong("offset"); val length = request.getInt("length")
                             val bytes = recordings.read(id, offset, length)
-                            val frames = PhoneBleProtocol.binaryFrames(bytes, bytes.size, frameBytes)
+                            val sealed = PhoneBleProtocol.seal(sessionKey, bytes, random)
+                            val frames = PhoneBleProtocol.binaryFrames(sealed, sealed.size, frameBytes)
                             enqueue(device, frames + PhoneBleProtocol.replyFrames(JSONObject().put("op", "chunk").put("id", id).put("offset", offset)
                                 .put("length", bytes.size).put("sha256", PhoneBleProtocol.sha256Hex(bytes)), frameBytes))
                         }

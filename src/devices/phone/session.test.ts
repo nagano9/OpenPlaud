@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { encodeBinary, encodeReply, FrameReader, proof, sha256Hex, verifyProof, type PhoneRecording } from './protocol';
+import { encodeBinary, encodeReply, FrameReader, open, proof, seal, sessionKey, sha256Hex, verifyProof, type PhoneRecording } from './protocol';
 import { PhoneSession, type PacketChannel } from './session';
 import { phoneFileName } from './driver';
 
@@ -12,7 +12,7 @@ const recording: PhoneRecording = { id: 42, size: audio.length, name: 'Rapat 1.m
 /** A phone that follows protocol.ts, as the Android app must. `corruptOnce` damages the first chunk. */
 function fakePhone(options: { key?: Buffer; corruptOnce?: boolean } = {}): PacketChannel & { requests: Record<string, unknown>[] } {
   const queue: Buffer[] = [], requests: Record<string, unknown>[] = [];
-  let desktopNonce = '', phoneNonce = 'cGhvbmUtbm9uY2UtMTIzNA==', authed = false, corrupt = options.corruptOnce ?? false;
+  let desktopNonce = '', phoneNonce = 'cGhvbmUtbm9uY2UtMTIzNA==', authed = false, corrupt = options.corruptOnce ?? false, session: Buffer = Buffer.alloc(0);
   const reply = (value: unknown) => queue.push(...encodeReply(value, 23));
   return {
     requests,
@@ -20,13 +20,13 @@ function fakePhone(options: { key?: Buffer; corruptOnce?: boolean } = {}): Packe
       const request = JSON.parse(Buffer.from(packet).toString('utf8'));
       requests.push(request);
       if (request.op === 'hello') { desktopNonce = request.nonce; reply({ op: 'hello', version: 1, clientId: 'client-1', device: 'Pixel 8', nonce: phoneNonce, proof: proof(options.key ?? key, 'phone', desktopNonce, phoneNonce) }); }
-      else if (request.op === 'auth') { authed = verifyProof(key, 'desktop', desktopNonce, phoneNonce, request.proof); reply(authed ? { op: 'ready' } : { op: 'error', code: 'auth', message: 'Desktop proof rejected' }); }
+      else if (request.op === 'auth') { authed = verifyProof(key, 'desktop', desktopNonce, phoneNonce, request.proof); session = sessionKey(key, desktopNonce, phoneNonce); reply(authed ? { op: 'ready' } : { op: 'error', code: 'auth', message: 'Desktop proof rejected' }); }
       else if (!authed) reply({ op: 'error', code: 'auth', message: 'Not authenticated' });
-      else if (request.op === 'list') reply({ op: 'list', recordings: [recording] });
+      else if (request.op === 'list') reply({ op: 'list', sealed: seal(session, Buffer.from(JSON.stringify([recording]))).toString('base64') });
       else if (request.op === 'get') {
         const slice = Buffer.from(audio.subarray(request.offset, request.offset + request.length));
-        const sent = Buffer.from(slice);
-        if (corrupt) { sent[0] ^= 0xff; corrupt = false; }
+        const sent = seal(session, slice);
+        if (corrupt) { sent[20] ^= 0xff; corrupt = false; }
         queue.push(...encodeBinary(sent, 180));
         reply({ op: 'chunk', id: request.id, offset: request.offset, length: slice.length, sha256: sha256Hex(slice) });
       }
@@ -59,6 +59,15 @@ test('downloads verify every chunk and ask again for a corrupted one', async () 
   expect(bytes.equals(audio)).toBe(true);
   expect(phone.requests.filter(request => request.op === 'get' && request.offset === 0)).toHaveLength(2);
   expect(progress.at(-1)).toBe(audio.length);
+});
+
+test('sealed data opens only with the session key it was sealed with', () => {
+  const first = sessionKey(key, 'desktop-nonce-aaaaaa', 'phone-nonce-bbbbbbbb');
+  const second = sessionKey(key, 'desktop-nonce-cccccc', 'phone-nonce-bbbbbbbb');
+  const sealed = seal(first, Buffer.from('rapat mingguan'));
+  expect(open(first, sealed).toString()).toBe('rapat mingguan');
+  expect(sealed.includes(Buffer.from('rapat'))).toBe(false);
+  expect(() => open(second, sealed)).toThrow();
 });
 
 test('frames reassemble across notifications and reject unknown kinds', () => {

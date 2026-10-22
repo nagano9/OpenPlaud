@@ -122,6 +122,14 @@ class PlaudPlugin(private val activity: Activity) : Plugin(activity) {
         else -> arrayOf("storage")
     }
     @Command fun phoneBleStatus(invoke: Invoke) = invoke.resolve(phoneBleValue())
+    /** An app update or reboot stops the sync service; bring it back when the app opens if it was on. */
+    override fun load(webView: android.webkit.WebView) {
+        super.load(webView)
+        if (PhoneBleSyncService.preferences(activity).getBoolean("enabled", false) && !PhoneBleSyncService.active) {
+            val intent = Intent(activity, PhoneBleSyncService::class.java)
+            runCatching { if (Build.VERSION.SDK_INT >= 26) activity.startForegroundService(intent) else activity.startService(intent) }
+        }
+    }
     @Command fun phoneBleSync(invoke: Invoke) {
         val args = invoke.getArgs()
         if (!args.getBoolean("enabled")) {

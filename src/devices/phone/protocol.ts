@@ -1,20 +1,22 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 
 /**
  * "OpenPlod Phone": the Bluetooth LE protocol between this desktop (GATT central, through the
  * Rust bridge) and the OpenPlod Android app (GATT peripheral). The phone exposes one service
- * with a write characteristic for requests and a notify characteristic for replies; both
- * require an encrypted (bonded) link.
+ * with a write characteristic for requests and a notify characteristic for replies.
  *
  * Requests are one UTF-8 JSON object per write. Replies are notifications, each starting with
  * a kind byte: `J` (JSON fragment, more follow), `j` (last JSON fragment) or `B` (binary audio
  * bytes for the current `get`). A `get` streams `B` frames and ends with a `j` reply carrying
- * the SHA-256 of exactly the bytes sent, so a dropped notification is detected and retried.
+ * the SHA-256 of the audio bytes, so a dropped notification is detected and retried.
  *
  * Both sides prove they hold the pairing credential: the key is SHA-256 of the phone's token,
  * and each side returns an HMAC over both nonces, so neither the token nor a replayable proof
- * crosses the radio. Keep in sync with `PhoneBleProtocol.kt` in the Android app.
+ * crosses the radio. The radio link itself is not bonded (Windows does not pair a phone's
+ * rotating LE address on its own), so everything private is sealed by the app instead: the
+ * recording list and every audio chunk are AES-256-GCM with a per-session key derived (HKDF)
+ * from the pairing key and both nonces. Keep in sync with `PhoneBleProtocol.kt`.
  */
 export const PHONE_SERVICE_UUID = '7f1e0001-5c6a-4b8e-9d1a-0a9e0f9c4f10';
 export const PHONE_NOTIFY_UUID = '7f1e0002-5c6a-4b8e-9d1a-0a9e0f9c4f10';
@@ -45,6 +47,25 @@ export function verifyProof(key: Buffer, role: 'phone' | 'desktop', desktopNonce
 
 export const sha256Hex = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 
+/** The per-session AES key; new nonces on every connection mean a new key every session. */
+export function sessionKey(key: Buffer, desktopNonce: string, phoneNonce: string): Buffer {
+  return Buffer.from(hkdfSync('sha256', key, Buffer.from(`${desktopNonce}|${phoneNonce}`, 'utf8'), Buffer.from('openplod-phone/v1 session', 'utf8'), 32));
+}
+
+/** `iv(12) | ciphertext | tag(16)`. */
+export function seal(key: Buffer, plaintext: Uint8Array): Buffer {
+  const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv);
+  return Buffer.concat([iv, cipher.update(plaintext), cipher.final(), cipher.getAuthTag()]);
+}
+
+export function open(key: Buffer, sealed: Uint8Array): Buffer {
+  if (sealed.length < 28) throw new Error('Sealed phone data is too short');
+  const bytes = Buffer.from(sealed);
+  const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
+  decipher.setAuthTag(bytes.subarray(bytes.length - 16));
+  return Buffer.concat([decipher.update(bytes.subarray(12, bytes.length - 16)), decipher.final()]);
+}
+
 export const helloReply = z.object({
   op: z.literal('hello'), version: z.number().int(), clientId: z.string().min(1).max(64),
   device: z.string().max(120), nonce: z.string().min(16).max(64), proof: z.string().min(16).max(128),
@@ -55,7 +76,9 @@ export const phoneRecording = z.object({
   name: z.string().max(240), recordedAt: z.string().max(40).nullable(), mime: z.string().max(80),
 }).strict();
 export type PhoneRecording = z.infer<typeof phoneRecording>;
-export const listReply = z.object({ op: z.literal('list'), recordings: z.array(phoneRecording).max(5000) }).strict();
+/** `sealed` is the base64 `seal()` of the JSON array of recordings. */
+export const listReply = z.object({ op: z.literal('list'), sealed: z.string().min(1).max(4 * 1024 * 1024) }).strict();
+export const recordingList = z.array(phoneRecording).max(5000);
 export const chunkReply = z.object({ op: z.literal('chunk'), id: z.number().int(), offset: z.number().int().nonnegative(), length: z.number().int().nonnegative(), sha256: z.string().regex(/^[0-9a-f]{64}$/) }).strict();
 export const errorReply = z.object({ op: z.literal('error'), code: z.string().max(64), message: z.string().max(500) }).strict();
 

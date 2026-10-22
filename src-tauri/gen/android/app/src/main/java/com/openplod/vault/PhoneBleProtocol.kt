@@ -14,7 +14,9 @@ import javax.crypto.spec.SecretKeySpec
  * - replies are notifications on [NOTIFY_UUID] starting with a kind byte: 'J' (JSON fragment,
  *   more follow), 'j' (last JSON fragment) or 'B' (audio bytes for the current `get`);
  * - both sides prove the pairing key (SHA-256 of this phone's pairing token) with an HMAC over
- *   both nonces, bound to the direction ("phone" or "desktop").
+ *   both nonces, bound to the direction ("phone" or "desktop");
+ * - the radio link is not bonded, so the recording list and audio chunks are sealed with
+ *   AES-256-GCM under a per-session key ([sessionKey]).
  */
 object PhoneBleProtocol {
     val SERVICE_UUID: UUID = UUID.fromString("7f1e0001-5c6a-4b8e-9d1a-0a9e0f9c4f10")
@@ -42,6 +44,22 @@ object PhoneBleProtocol {
         val expected = Base64.decode(proof(key, role, desktopNonce, phoneNonce), Base64.NO_WRAP)
         val actual = try { Base64.decode(supplied, Base64.NO_WRAP) } catch (_: IllegalArgumentException) { return false }
         return MessageDigest.isEqual(expected, actual)
+    }
+
+    /** Per-session AES key: HKDF-SHA256(ikm = pairing key, salt = "desktopNonce|phoneNonce"). */
+    fun sessionKey(key: ByteArray, desktopNonce: String, phoneNonce: String): ByteArray {
+        val extract = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec("$desktopNonce|$phoneNonce".toByteArray(Charsets.UTF_8), "HmacSHA256")) }
+        val prk = extract.doFinal(key)
+        val expand = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(prk, "HmacSHA256")) }
+        return expand.doFinal("openplod-phone/v1 session".toByteArray(Charsets.UTF_8) + byteArrayOf(1)).copyOf(32)
+    }
+
+    /** `iv(12) | ciphertext | tag(16)`, AES-256-GCM, like `seal()` in protocol.ts. */
+    fun seal(key: ByteArray, plaintext: ByteArray, random: java.security.SecureRandom): ByteArray {
+        val iv = ByteArray(12).also(random::nextBytes)
+        val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), javax.crypto.spec.GCMParameterSpec(128, iv))
+        return iv + cipher.doFinal(plaintext)
     }
 
     fun sha256Hex(bytes: ByteArray, offset: Int = 0, length: Int = bytes.size): String {

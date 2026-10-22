@@ -26,3 +26,21 @@ test('each driver deduplicates against its own provider and keeps its own events
   expect(db.query("SELECT value FROM user_settings WHERE key='phoneAutoImport'").get()).toEqual({ value: 'true' });
   db.close();
 });
+
+test('a duplicate of audio already in the vault is downloaded once, even after a restart', async () => {
+  const db = new Database(':memory:');
+  db.exec('CREATE TABLE user_settings(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE recordings(id TEXT,source_provider TEXT,source_recording_id TEXT)');
+  let downloads = 0;
+  const phone: RecordingSourceDriver = {
+    id: 'phone', label: 'Android phone', provider: 'phone', notConfiguredMessage: '', configured: () => true,
+    list: async () => ({ serial: 'pixel', checkedAt: new Date().toISOString(), sessions: [{ sessionId: 9, size: 4096 }] }),
+    // The same bytes arrived over Wi-Fi first, so the vault returns that recording and adds nothing.
+    import: async () => { downloads++; return { added: false, recording: { id: 'wifi-row', filePath: 'x', originalFilename: 'x', fingerprint: 'x', sourceRecordingId: null } }; },
+  };
+  const first = new DeviceAutoImport(db, phone); first.set(true);
+  for (let tick = 0; tick < 4; tick++) await first.tick();
+  const restarted = new DeviceAutoImport(db, phone);
+  for (let tick = 0; tick < 3; tick++) await restarted.tick();
+  expect(downloads).toBe(1);
+  db.close();
+});

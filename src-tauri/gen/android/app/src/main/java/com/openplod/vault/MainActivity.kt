@@ -61,6 +61,8 @@ class MainActivity : TauriActivity() {
         target.outputStream().use { output -> input.copyTo(output) }
       } ?: error("The shared audio stream could not be opened.")
 
+      // With Bluetooth sync on, the desktop can also copy this recording without Wi-Fi.
+      if (PhoneBleSyncService.preferences(this).getBoolean("enabled", false)) runCatching { PhoneRecordings.keep(this, target, filename) }
       pendingShare?.file?.delete()
       pendingShare = SharedAudio(
         id = id,
