@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { z } from 'zod';
 import { speechProviders, type AiConfig, type SpeechProvider } from './config';
-import { speechCapabilities, validateSpeechOptions } from './capabilities';
+import { defaultSpeechModel, speechCapabilities, validateSpeechOptions } from './capabilities';
 
 /**
  * Transcription profiles: a named context prompt, vocabulary, and optional
@@ -177,6 +177,11 @@ export function effectiveTranscription(database: Database, config: AiConfig): Ef
     transcriptionVocabulary: dedupe([...config.transcriptionVocabulary, ...profileVocabulary]),
     transcriptionPrompt: [config.transcriptionPrompt, profilePromptText].filter(Boolean).join('\n').slice(0, 2000),
   };
+  // OpenAI documents no prompt for gpt-transcribe, so its hints are not sent and provenance says so.
+  if (engine === 'openai' && (effective.transcriptionModel || defaultSpeechModel('openai')) === 'gpt-transcribe') {
+    if (effective.transcriptionVocabulary.length) { ignored.push('vocabulary'); effective.transcriptionVocabulary = []; }
+    if (effective.transcriptionPrompt) { ignored.push('prompt'); effective.transcriptionPrompt = ''; }
+  }
   return {
     config: effective,
     options: { model: effective.transcriptionModel || undefined, language: effective.transcriptionLanguage, diarize: effective.transcriptionDiarize,

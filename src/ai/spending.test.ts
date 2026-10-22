@@ -82,9 +82,12 @@ test('recording estimates use stored duration and flag batches that need confirm
 });
 
 test('capabilities validate documented languages only and report timestamp granularity per model', () => {
-  expect(() => validateSpeechOptions('mistral', { language: 'ja' })).toThrow('does not document support');
+  // Voxtral does not document Indonesian; OpenAI and Deepgram Nova-3 handle it.
+  expect(() => validateSpeechOptions('mistral', { language: 'id' })).toThrow('does not document support');
   expect(() => validateSpeechOptions('mistral', { language: 'fr' })).not.toThrow();
   expect(() => validateSpeechOptions('openai', { model: 'whisper-1', language: 'pt-BR' })).not.toThrow();
+  expect(() => validateSpeechOptions('openai', { language: 'id' })).not.toThrow();
+  expect(() => validateSpeechOptions('deepgram', { model: 'nova-3', language: 'id' })).not.toThrow();
   expect(() => validateSpeechOptions('deepgram', { language: 'xx' })).not.toThrow();
   expect(() => validateSpeechOptions('whisper', { language: 'auto' })).not.toThrow();
   expect(speechLanguages('assemblyai')).toBeNull();

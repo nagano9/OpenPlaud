@@ -34,8 +34,18 @@ test('OpenAI multipart preserves automatic language, vocabulary and genuine unkn
     const form = init.body as FormData; expect(form.get('language')).toBeNull(); expect(form.get('prompt')).toBe('OpenPlod'); expect(form.get('response_format')).toBe('verbose_json');
     return Response.json({ text: 'Bonjour OpenPlod', segments: [{ start: 0, end: 2, text: 'Bonjour OpenPlod' }] });
   }));
-  const result = await engine.transcribeBuffer(Buffer.from('synthetic-audio'), 'audio/wav', { vocabulary: ['OpenPlod'] });
+  const result = await engine.transcribeBuffer(Buffer.from('synthetic-audio'), 'audio/wav', { model: 'whisper-1', vocabulary: ['OpenPlod'] });
   expect(result).toMatchObject({ success: true, speakerCount: null, confidence: null, duration: 2 });
+});
+test('gpt-transcribe is the default: languages[] instead of language, no prompt, detected language kept', async () => {
+  const engine = new OpenAiEngine('synthetic-secret', fakeFetch(async (_url, init) => {
+    const form = init.body as FormData;
+    expect(form.get('model')).toBe('gpt-transcribe'); expect(form.getAll('languages[]')).toEqual(['id']); expect(form.get('language')).toBeNull();
+    expect(form.get('prompt')).toBeNull(); expect(form.get('response_format')).toBe('json'); expect(form.get('timestamp_granularities[]')).toBeNull();
+    return Response.json({ text: 'Rapat dimulai pukul sembilan', languages: [{ code: 'id' }], usage: { type: 'duration', seconds: 3 } });
+  }));
+  const result = await engine.transcribeBuffer(Buffer.from('synthetic-audio'), 'audio/wav', { language: 'id', vocabulary: ['PLN NR'] });
+  expect(result).toMatchObject({ success: true, fullText: 'Rapat dimulai pukul sembilan', segments: [], metadata: { model: 'gpt-transcribe', language: 'id' } });
 });
 test('OpenAI text-only models do not invent timestamps', async () => {
   const engine = new OpenAiEngine('key', fakeFetch(async (_url, init) => {

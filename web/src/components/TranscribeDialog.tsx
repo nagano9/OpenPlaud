@@ -3,7 +3,7 @@ import { NoteDialog } from './NoteDialogs'
 import { Button } from './ui/button'
 import { AudioLines, Loader2, X } from './icons'
 import { aiSettingsApi, profilesApi, type AiSettings, type CostEstimate, type SpeechProvider, type TranscriptionProfile } from '@/lib/ai-settings'
-import { PROMPT_LIMIT, describeEstimate, joinLabels, languagesFor, profileFit } from '@/lib/transcription'
+import { PROMPT_LIMIT, describeEstimate, joinLabels, languagesFor, modelLabel, profileFit } from '@/lib/transcription'
 import { t } from '@/i18n'
 import { api } from '@/lib/api'
 import './profiles.css'
@@ -45,7 +45,7 @@ export function TranscribeDialog({ recordingId, title, onClose, onQueued }: { re
       </select></label>
       {profile && <p className="profile-hint" {...(fit?.ignored.length ? { 'data-warn': '' } : {})}>{profile.prompt || profile.description || t('No context prompt.')}{fit?.ignored.length ? ` ${t('{provider} will not receive the {items}.', { provider: fit.label, items: joinLabels(fit.ignored, 'disjunction') })}` : ''}</p>}
       <label>{t('Provider')}<select disabled={busy || Boolean(profile?.engine)} value={engine} onChange={e => { const next = e.target.value as SpeechProvider; setSettings({ ...settings, transcriptionEngine: next, transcriptionModel: '', transcriptionDiarize: false, transcriptionVocabulary: [], ...(settings.capabilities[next].prompt ? {} : { transcriptionPrompt: '' }) }) }}>{Object.entries(settings.capabilities).map(([id, item]) => <option key={id} value={id} disabled={settings.privacyMode === 'local-only' && !item.local}>{item.label}</option>)}</select></label>
-      {!profile?.engine && <label>{t('Model')}<select disabled={busy} value={settings.transcriptionModel} onChange={e => setSettings({ ...settings, transcriptionModel: e.target.value })}><option value="">{t('{model} (default)', { model: capability.models[0] })}</option>{capability.models.map(model => <option key={model}>{model}</option>)}</select></label>}
+      {!profile?.engine && <label>{t('Model')}<select disabled={busy} value={settings.transcriptionModel} onChange={e => setSettings({ ...settings, transcriptionModel: e.target.value })}><option value="">{t('{model} (default)', { model: capability.models[0] })}</option>{capability.models.map(model => <option key={model} value={model}>{modelLabel(capability, model)}</option>)}</select></label>}
       {!profile?.language && <label>{t('Language')}<select disabled={busy} value={settings.transcriptionLanguage} onChange={e => setSettings({ ...settings, transcriptionLanguage: e.target.value })}>{languagesFor(settings, engine!, profile?.engine ? profile.model : settings.transcriptionModel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
       {capability.prompt && <label>{t('Context for this recording')}<textarea rows={2} maxLength={PROMPT_LIMIT} disabled={busy} value={settings.transcriptionPrompt} placeholder={t('Optional: who speaks, the topic, names to spell')} onChange={e => setSettings({ ...settings, transcriptionPrompt: e.target.value })} /></label>}
       <p className="note-ai-disclosure">{capability.local ? t('Audio will be processed on this computer.') : t('Audio will be sent to {provider}. Provider charges may apply.', { provider: capability.label })} {t('No fallback provider. Original audio and manual edits are retained.')}</p>

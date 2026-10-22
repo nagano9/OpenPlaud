@@ -50,10 +50,15 @@ describe('Transcription profiles', () => {
     expect(onMistral.ignored).toEqual(['prompt', 'speaker labels']);
     expect(onMistral.profile).toEqual({ id: meeting.id, name: 'Team meeting' });
 
-    const onOpenAi = effectiveTranscription(db, config({ transcriptionEngine: 'openai', transcriptionPrompt: 'Quarterly review.', transcriptionVocabulary: ['Plaud'], transcriptionProfile: meeting.id }));
+    const onOpenAi = effectiveTranscription(db, config({ transcriptionEngine: 'openai', transcriptionModel: 'whisper-1', transcriptionPrompt: 'Quarterly review.', transcriptionVocabulary: ['Plaud'], transcriptionProfile: meeting.id }));
     expect(onOpenAi.options.prompt).toBe(`Quarterly review.\n${meeting.prompt}`);
     expect(onOpenAi.options.diarize).toBe(false);
     expect(onOpenAi.ignored).toEqual(['speaker labels']);
+    // gpt-transcribe (the OpenAI default) takes no prompt: nothing is sent and provenance lists both.
+    const onCurrent = effectiveTranscription(db, config({ transcriptionEngine: 'openai', transcriptionPrompt: 'Quarterly review.', transcriptionVocabulary: ['Plaud'], transcriptionProfile: meeting.id }));
+    expect(onCurrent.options).toMatchObject({ vocabulary: [] });
+    expect(onCurrent.options.prompt).toBeUndefined();
+    expect(onCurrent.ignored).toEqual(['speaker labels', 'vocabulary', 'prompt']);
     expect(effectiveTranscription(db, config({ transcriptionEngine: 'assemblyai', transcriptionProfile: meeting.id })).options.diarize).toBe(true);
   });
 
@@ -105,7 +110,7 @@ describe('Provider prompts', () => {
       prompt = (init.body as FormData).get('prompt');
       return Response.json({ text: 'ok', segments: [{ start: 0, end: 1, text: 'ok' }] });
     }) as typeof fetch);
-    expect((await engine.transcribeBuffer(Buffer.from('audio'), 'audio/wav', { prompt: 'Board meeting.', vocabulary: ['OpenPlod', 'Voxtral'] })).success).toBe(true);
+    expect((await engine.transcribeBuffer(Buffer.from('audio'), 'audio/wav', { model: 'whisper-1', prompt: 'Board meeting.', vocabulary: ['OpenPlod', 'Voxtral'] })).success).toBe(true);
     expect(prompt).toBe('Board meeting.\nOpenPlod, Voxtral');
   });
 

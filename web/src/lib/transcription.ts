@@ -5,12 +5,14 @@ import { t, tn } from '@/i18n'
 export const LANGUAGES: [string, string][] = [
   ['auto', 'Detect automatically'], ['en', 'English'], ['fr', 'French'], ['de', 'German'], ['es', 'Spanish'],
   ['it', 'Italian'], ['pt', 'Portuguese'], ['nl', 'Dutch'], ['ja', 'Japanese'], ['zh', 'Chinese'],
+  ['id', 'Indonesian'], ['ms', 'Malay'], ['ko', 'Korean'], ['th', 'Thai'], ['vi', 'Vietnamese'], ['hi', 'Hindi'], ['ar', 'Arabic'],
 ]
 /** Language names in the UI language; call at render time. */
 function languageNames(): Record<string, string> {
   return {
     auto: t('Detect automatically'), en: t('English'), fr: t('French'), de: t('German'), es: t('Spanish'),
     it: t('Italian'), pt: t('Portuguese'), nl: t('Dutch'), ja: t('Japanese'), zh: t('Chinese'),
+    id: t('Indonesian'), ms: t('Malay'), ko: t('Korean'), th: t('Thai'), vi: t('Vietnamese'), hi: t('Hindi'), ar: t('Arabic'),
   }
 }
 /** Translates the labels of a language list for display. */
@@ -19,6 +21,11 @@ export const localizeLanguages = (list: [string, string][] = LANGUAGES): [string
   return list.map(([code, label]) => [code, names[code] ?? label])
 }
 export const languageLabel = (code: string | null) => (code ? languageNames()[code] : undefined) ?? code ?? ''
+/** A model name for pickers, marked when its provider has announced a shutdown date. */
+export function modelLabel(capability: object, model: string): string {
+  const retires = (capability as { retires?: Record<string, string> }).retires?.[model]
+  return retires ? t('{model} (retires {date})', { model, date: retires }) : model
+}
 /** A processing job status in the UI language; unknown statuses are shown as sent. */
 export function jobStatusLabel(status: string): string {
   const names: Record<string, string> = { pending: t('pending'), running: t('running'), complete: t('complete'), completed: t('complete'), failed: t('failed'), cancelled: t('cancelled') }

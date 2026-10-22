@@ -5,8 +5,8 @@ import { ArrowLeft, ArrowRight, AudioLines, Bluetooth, Check, CheckCircle2, Clou
 import { Button } from '@/components/ui/button'
 import { Brand } from '@/components/Brand'
 import { ONBOARDING_EVENT, aiSettingsApi, onboardingApi, profilesApi, type AiSettings, type OnboardingStatus, type ProfilePreset, type SpeechProvider } from '@/lib/ai-settings'
-import { configOf, localizeLanguages } from '@/lib/transcription'
-import { LOCALES, setLocale, t, tn, useLocale } from '@/i18n'
+import { configOf, localizeLanguages, modelLabel } from '@/lib/transcription'
+import { getLocale, LOCALES, setLocale, t, tn, useLocale } from '@/i18n'
 import { getRuntime } from '@/lib/runtime'
 import './onboarding.css'
 
@@ -14,7 +14,9 @@ const steps = () => [t('Welcome'), t('Privacy'), t('Transcription'), t('Profile'
 const SPEECH: SpeechProvider[] = ['whisper', 'mistral', 'openai', 'deepgram', 'assemblyai']
 /** Speech providers whose key also drives summaries, titles and chat, so one key gives the full Plaud-like flow. */
 const TEXT_CAPABLE: SpeechProvider[] = ['mistral', 'openai']
-const recommended = (local: boolean): SpeechProvider[] => local ? ['whisper'] : TEXT_CAPABLE
+/** Voxtral does not document Indonesian, so an Indonesian interface recommends OpenAI first. */
+const cloudDefault = (): SpeechProvider => getLocale() === 'id' ? 'openai' : 'mistral'
+const recommended = (local: boolean): SpeechProvider[] => local ? ['whisper'] : getLocale() === 'id' ? ['openai', 'mistral'] : TEXT_CAPABLE
 const blurb = (): Record<SpeechProvider, string> => ({
   whisper: t('Runs on this computer. Needs whisper.cpp and a model file.'),
   mistral: t('Voxtral: fast, multilingual, and the same key writes summaries.'),
@@ -132,7 +134,7 @@ function Onboarding({ onClose }: { onClose: () => void }) {
               <button type="button" className="onboarding-card" role="radio" aria-checked={local} disabled={!settings} onClick={() => settings && setSettings({ ...settings, privacyMode: 'local-only', transcriptionEngine: 'whisper', transcriptionModel: '', transcriptionDiarize: false, transcriptionFallback: [], analysisProvider: 'ollama', analysisModel: '', documentProvider: 'ollama', documentModel: '', chatProvider: 'ollama', chatModel: '' })}>
                 <Lock /><strong>{t('Local only')}</strong><span>{t('Whisper.cpp transcribes and Ollama writes documents, all on this machine. Slower, fully offline.')}</span>
               </button>
-              <button type="button" className="onboarding-card" role="radio" aria-checked={settings ? !local : false} disabled={!settings} onClick={() => settings && setSettings({ ...settings, privacyMode: 'selected-providers', ...(settings.transcriptionEngine === 'whisper' ? { transcriptionEngine: 'mistral', transcriptionModel: '' } : {}) })}>
+              <button type="button" className="onboarding-card" role="radio" aria-checked={settings ? !local : false} disabled={!settings} onClick={() => settings && setSettings({ ...settings, privacyMode: 'selected-providers', ...(settings.transcriptionEngine === 'whisper' ? { transcriptionEngine: cloudDefault(), transcriptionModel: '', ...(getLocale() === 'id' ? { transcriptionLanguage: 'id' } : {}) } : {}) })}>
                 <Cloud /><strong>{t('Providers I choose')}</strong><span>{t('Send audio or text only to the providers you select, with your own API keys. Faster and more accurate.')}</span>
               </button>
             </div>
@@ -142,7 +144,8 @@ function Onboarding({ onClose }: { onClose: () => void }) {
             <Dialog.Title>{t('Pick a transcription model')}</Dialog.Title>
             <Dialog.Description id="onboarding-step-description">{t('This is the default; each recording can still use another provider or profile.')}</Dialog.Description>
             <div className="onboarding-providers" role="radiogroup" aria-label={t('Transcription provider')}>
-              {SPEECH.filter(id => showAll || id === engine || recommended(local).includes(id)).map(id => { const item = settings.capabilities[id]; const blocked = local && !item.local
+              {SPEECH.filter(id => showAll || id === engine || recommended(local).includes(id))
+                .sort((a, b) => (recommended(local).indexOf(a) + 1 || 99) - (recommended(local).indexOf(b) + 1 || 99)).map(id => { const item = settings.capabilities[id]; const blocked = local && !item.local
                 return <button key={id} type="button" className="onboarding-card" role="radio" aria-checked={engine === id} disabled={blocked || busy} onClick={() => { setChecked(''); setKey(''); setSettings({ ...settings, transcriptionEngine: id, transcriptionModel: '', transcriptionDiarize: false, transcriptionVocabulary: [], transcriptionFallback: [], ...(item.prompt ? {} : { transcriptionPrompt: '' }) }) }}>
                   <strong>{item.label}{recommended(local).includes(id) && <em className="onboarding-recommended">{t('Recommended')}</em>}</strong><span>{blurb()[id]}</span>
                   <small>{[item.local ? t('On device') : t('Cloud'), item.prompt && t('Prompt'), item.vocabulary && t('Vocabulary'), item.diarization && t('Speakers')].filter(Boolean).join(' · ')}</small>
@@ -151,7 +154,7 @@ function Onboarding({ onClose }: { onClose: () => void }) {
             {!showAll && !local && <Button type="button" variant="ghost" size="sm" onClick={() => setShowAll(true)}>{t('Show other providers')}</Button>}
             {!local && <p className="onboarding-note">{TEXT_CAPABLE.includes(engine) ? t('Summaries and titles will use {provider} with the same key.', { provider: capability.label }) : t('Summaries need a Mistral or OpenAI key. Add one in AI settings after setup.')}</p>}
             <div className="onboarding-fields">
-              <label>{t('Model')}<select value={settings.transcriptionModel} onChange={event => setSettings({ ...settings, transcriptionModel: event.target.value })}><option value="">{t('{model} (default)', { model: capability.models[0] })}</option>{capability.models.map(model => <option key={model}>{model}</option>)}</select></label>
+              <label>{t('Model')}<select value={settings.transcriptionModel} onChange={event => setSettings({ ...settings, transcriptionModel: event.target.value })}><option value="">{t('{model} (default)', { model: capability.models[0] })}</option>{capability.models.map(model => <option key={model} value={model}>{modelLabel(capability, model)}</option>)}</select></label>
               <label>{t('Language')}<select value={settings.transcriptionLanguage} onChange={event => setSettings({ ...settings, transcriptionLanguage: event.target.value })}>{localizeLanguages().map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></label>
               {capability.diarization && <label className="onboarding-check"><input type="checkbox" checked={settings.transcriptionDiarize} onChange={event => setSettings({ ...settings, transcriptionDiarize: event.target.checked })} />{t('Label speakers')}</label>}
             </div>

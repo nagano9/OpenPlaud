@@ -3,7 +3,7 @@ import { AudioLines, Loader2, Pencil, Plus, Sparkles, Trash2, X, Save } from '@/
 import { Button } from '@/components/ui/button'
 import { NoteDialog } from '@/components/NoteDialogs'
 import { aiSettingsApi, profilesApi, type AiSettings, type ProfileInput, type ProfilePreset, type SpeechProvider, type TranscriptionProfile } from '@/lib/ai-settings'
-import { PROMPT_LIMIT, joinLabels, languageLabel, localizeLanguages, profileFit } from '@/lib/transcription'
+import { PROMPT_LIMIT, joinLabels, languageLabel, localizeLanguages, modelLabel, profileFit } from '@/lib/transcription'
 import { t, tn } from '@/i18n'
 import './profiles.css'
 
@@ -96,7 +96,7 @@ function ProfileEditor({ settings, profile, onClose, onSaved }: { settings: AiSe
         </select></label>
         <label>{t('Model')}<select disabled={!capability} value={draft.model ?? ''} onChange={event => set({ model: event.target.value || null })}>
           <option value="">{capability ? t('{model} (default)', { model: capability.models[0] }) : t('Default model')}</option>
-          {capability?.models.map(model => <option key={model}>{model}</option>)}
+          {capability?.models.map(model => <option key={model} value={model}>{modelLabel(capability, model)}</option>)}
         </select></label>
         <label>{t('Language')}<select value={draft.language ?? ''} onChange={event => set({ language: event.target.value || null })}>
           <option value="">{t('Use the default')}</option>{localizeLanguages().map(([code, label]) => <option key={code} value={code}>{label}</option>)}

@@ -6,8 +6,8 @@ export type TimestampGranularity = 'word' | 'segment' | 'none';
  * as ISO 639-1 codes. whisper.cpp runs the same multilingual models.
  */
 const WHISPER_LANGUAGES = ['af', 'ar', 'hy', 'az', 'be', 'bs', 'bg', 'ca', 'zh', 'hr', 'cs', 'da', 'nl', 'en', 'et', 'fi', 'fr', 'gl', 'de', 'el', 'he', 'hi', 'hu', 'is', 'id', 'it', 'ja', 'kn', 'kk', 'ko', 'lv', 'lt', 'mk', 'ms', 'mr', 'mi', 'ne', 'no', 'fa', 'pl', 'pt', 'ro', 'ru', 'sr', 'sk', 'sl', 'es', 'sw', 'sv', 'tl', 'ta', 'th', 'tr', 'uk', 'ur', 'vi', 'cy'] as const;
-/** Languages Mistral documents for Voxtral transcription. */
-const VOXTRAL_LANGUAGES = ['en', 'es', 'fr', 'pt', 'hi', 'de', 'nl', 'it'] as const;
+/** Languages Mistral documents for Voxtral Transcribe 2 (February 2026); Indonesian is not among them. */
+const VOXTRAL_LANGUAGES = ['en', 'zh', 'hi', 'es', 'ar', 'fr', 'pt', 'ru', 'de', 'ja', 'ko', 'it', 'nl'] as const;
 
 /**
  * Speech capability registry (AI-04). Per-model `languages` is a documented list
@@ -21,10 +21,15 @@ export const speechCapabilities = {
     languages: { base: WHISPER_LANGUAGES, small: WHISPER_LANGUAGES, medium: WHISPER_LANGUAGES }, timestampGranularity: { base: 'segment', small: 'segment', medium: 'segment' } },
   mistral: { label: 'Mistral Voxtral', local: false, models: ['voxtral-mini-latest'], timestamps: true, diarization: false, vocabulary: false, prompt: false, maxBytes: null, formats: ['wav', 'm4a', 'mp3', 'flac', 'ogg', 'webm', 'aac'], streaming: false,
     languages: { 'voxtral-mini-latest': VOXTRAL_LANGUAGES }, timestampGranularity: { 'voxtral-mini-latest': 'segment' } },
-  deepgram: { label: 'Deepgram', local: false, models: ['nova-2', 'nova-3'], timestamps: true, diarization: true, vocabulary: true, prompt: false, maxBytes: null, formats: ['wav', 'm4a', 'mp3', 'flac', 'ogg', 'webm', 'aac'], streaming: false,
+  // Nova-3 first: Deepgram documents Indonesian (id) for it since September 2025.
+  deepgram: { label: 'Deepgram', local: false, models: ['nova-3', 'nova-2'], timestamps: true, diarization: true, vocabulary: true, prompt: false, maxBytes: null, formats: ['wav', 'm4a', 'mp3', 'flac', 'ogg', 'webm', 'aac'], streaming: false,
     languages: { 'nova-2': null, 'nova-3': null }, timestampGranularity: { 'nova-2': 'word', 'nova-3': 'word' } },
-  openai: { label: 'OpenAI', local: false, models: ['whisper-1', 'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'], timestamps: true, diarization: false, vocabulary: true, prompt: true, maxBytes: 25_000_000, formats: ['mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm'], streaming: false,
-    languages: { 'whisper-1': WHISPER_LANGUAGES, 'gpt-4o-transcribe': WHISPER_LANGUAGES, 'gpt-4o-mini-transcribe': WHISPER_LANGUAGES }, timestampGranularity: { 'whisper-1': 'segment', 'gpt-4o-transcribe': 'none', 'gpt-4o-mini-transcribe': 'none' } },
+  // gpt-transcribe first: OpenAI shuts the other models down on 2027-02-26. It publishes no
+  // language list yet, so its languages pass through and OpenAI decides (it rejects unknown codes).
+  openai: { label: 'OpenAI', local: false, models: ['gpt-transcribe', 'whisper-1', 'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'], timestamps: true, diarization: false, vocabulary: true, prompt: true, maxBytes: 25_000_000, formats: ['mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm'], streaming: false,
+    languages: { 'gpt-transcribe': null, 'whisper-1': WHISPER_LANGUAGES, 'gpt-4o-transcribe': WHISPER_LANGUAGES, 'gpt-4o-mini-transcribe': WHISPER_LANGUAGES },
+    timestampGranularity: { 'gpt-transcribe': 'none', 'whisper-1': 'segment', 'gpt-4o-transcribe': 'none', 'gpt-4o-mini-transcribe': 'none' },
+    retires: { 'whisper-1': '2027-02-26', 'gpt-4o-transcribe': '2027-02-26', 'gpt-4o-mini-transcribe': '2027-02-26' } },
   assemblyai: { label: 'AssemblyAI', local: false, models: ['universal-2'], timestamps: true, diarization: true, vocabulary: true, prompt: false, maxBytes: 100_000_000, formats: ['wav', 'm4a', 'mp3', 'flac', 'ogg', 'webm', 'aac'], streaming: false,
     languages: { 'universal-2': null }, timestampGranularity: { 'universal-2': 'segment' } },
 } satisfies Record<SpeechProvider, { models: string[]; languages: Record<string, readonly string[] | null>; timestampGranularity: Record<string, TimestampGranularity>; maxBytes: number | null } & Record<string, unknown>>;
