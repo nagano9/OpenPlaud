@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, test, expect } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { initializeOrganizer, OrganizerStore } from './store';
-import { RecordingAi, normalizeSourceReferences } from './recording-ai';
+import { RecordingAi, normalizeSourceReferences, reconcileSourceReferences } from './recording-ai';
 import { createRecordingAiApi } from '../api/recording-ai';
 let db: Database, store: OrganizerStore, recordingId: string;
 beforeEach(() => {
@@ -36,6 +36,19 @@ test('rejects unknown and invented citations and does not persist answers', asyn
 test('grouped references normalize without fabricating missing sources', () => {
   expect(normalizeSourceReferences('Evidence [S1, S2]. [S3]')).toBe('Evidence [S1] [S2]. [S3]');
   expect(normalizeSourceReferences('[not a source]')).toBe('[not a source]');
+});
+test('unbacked markers are dropped and quoted sources the text forgot are appended', () => {
+  // [S2] has no quote behind it, S3 was quoted but never marked.
+  expect(reconcileSourceReferences('Rapat memutuskan menyimpan audio asli [S1] [S2].', ['S1', 'S3'])).toBe('Rapat memutuskan menyimpan audio asli [S1]. [S3]');
+  expect(reconcileSourceReferences('Bukti tidak cukup [S1].', [])).toBe('Bukti tidak cukup.');
+  expect(reconcileSourceReferences('Ringkasan [S1, S2].', ['S1', 'S2'])).toBe('Ringkasan [S1] [S2].');
+});
+test('a model that cites without marking, or marks without citing, still gets a saved answer', async () => {
+  const content = (answer: string, citations: { sourceId: string; quote: string }[]) => Response.json({ model: 'test-provider', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ answer, citations }) } }] });
+  const unmarked = await create(async () => content('Audio asli disimpan.', [{ sourceId: 'S1', quote: 'Keep the original audio.' }])).ask(input(), async () => {});
+  expect(unmarked.answer).toBe('Audio asli disimpan. [S1]');
+  const uncited = await create(async () => content('Audio asli disimpan [S1].', [])).ask(input(), async () => {});
+  expect(uncited.answer).toBe('Audio asli disimpan.'); expect(uncited.citations).toEqual([]);
 });
 test('partial timestamps do not silently omit transcript text, and follow-ups include previous answers', async () => {
   db.query('UPDATE transcripts SET full_text=?').run('Keep the original audio. Extra unsegmented text.');

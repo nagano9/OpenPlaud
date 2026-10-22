@@ -21,6 +21,20 @@ export const questionSchema = z.object({ id: id, conversationId: id, recordingId
 import type { AiSource, AiAnswer, AiConversationSummary, AiConversationContext } from './recording-ai-types';
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 export const normalizeSourceReferences = (text: string) => text.replace(/\[(S\d+(?:\s*,\s*S\d+)+)\]/g, (_match, ids: string) => ids.split(',').map(value => `[${value.trim()}]`).join(' '));
+/**
+ * Models often cite a source without marking it in the text, or mark `[S2]` without quoting it.
+ * Neither is fabricated evidence (every quote is checked against its transcript separately), so
+ * the answer is kept: a marker with no quote behind it is removed, so no claim looks sourced when
+ * it is not, and a quoted source the text forgot to mark is appended as a marker.
+ */
+export function reconcileSourceReferences(text: string, citedIds: string[]): string {
+  const cited = new Set(citedIds);
+  let answer = normalizeSourceReferences(text).replace(/ ?\[(S\d+)\]/g, (marker, ref: string) => cited.has(ref) ? marker : '');
+  const marked = new Set([...answer.matchAll(/\[(S\d+)\]/g)].map(match => match[1]));
+  const missing = [...cited].filter(ref => !marked.has(ref));
+  if (missing.length) answer = `${answer.trimEnd()} ${missing.map(ref => `[${ref}]`).join(' ')}`;
+  return answer;
+}
 const failure = (status: 400 | 404 | 409 | 413 | 503, code: string, message: string): never => { throw new OrganizerError(status, code, message); };
 /** Passages retrieved per question when the person did not choose recordings. */
 export const RETRIEVED_PASSAGES = 16;
@@ -282,14 +296,12 @@ export class RecordingAi {
         ], { signal, maxTokens: 6000, json: true }, this.fetcher);
       const raw = JSON.parse(response.text) as { followUps?: unknown };
       const answer = z.object({ answer: z.string().trim().min(1).max(40000), citations: z.array(z.object({ sourceId: z.string(), quote: z.string().min(1).max(4000) })).max(100) }).parse(raw);
-      answer.answer = normalizeSourceReferences(answer.answer);
       await step('citations');
       for (const citation of answer.citations) {
         const source = sources.find(s => s.id === citation.sourceId);
         if (!source || !source.text.includes(citation.quote)) failure(503, 'invalid_citation', 'AI returned a citation that does not match the transcript. Answer not saved.');
       }
-      const refs = [...answer.answer.matchAll(/\[(S\d+)\]/g)].map(m => m[1]);
-      if (refs.some(ref => !answer.citations.some(c => c.sourceId === ref)) || answer.citations.some(c => !refs.includes(c.sourceId))) failure(503, 'invalid_reference', 'AI returned inconsistent source references. Answer not saved.');
+      answer.answer = reconcileSourceReferences(answer.answer, answer.citations.map(citation => citation.sourceId));
       this.active(sentRecordingIds); signal?.throwIfAborted();
       await step('saved');
       const usedRecordingIds = [...new Set(answer.citations.map(citation => sources.find(source => source.id === citation.sourceId)!.recordingId))].sort();

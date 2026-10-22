@@ -4,7 +4,7 @@ import { OrganizerError } from '../organizer/store';
 import { identifier } from '../organizer/schemas';
 import { textSelection } from '../ai/config';
 import { completeText, TextProviderError } from '../ai/text';
-import { normalizeSourceReferences } from '../organizer/recording-ai';
+import { reconcileSourceReferences } from '../organizer/recording-ai';
 import type { KnowledgeIndex } from './retrieval';
 import { contentTokens } from './text';
 import { sampleTranscript } from './transcript-sample';
@@ -158,14 +158,11 @@ export class KnowledgeSuggestions {
     }
     const parsed = summaryReply.safeParse(parseJson(reply.text));
     if (!parsed.success) return fail(503, 'invalid_summary', 'The AI provider returned a summary in an unexpected format. Nothing was saved.');
-    const summary = normalizeSourceReferences(parsed.data.summary);
     for (const citation of parsed.data.citations) {
       const source = sources.find(row => row.id === citation.sourceId);
       if (!source || !source.text.includes(citation.quote)) fail(503, 'invalid_citation', 'The AI provider returned a citation that does not match the transcripts. Nothing was saved.');
     }
-    const refs = [...summary.matchAll(/\[(S\d+)\]/g)].map(match => match[1]);
-    if (refs.some(ref => !parsed.data.citations.some(citation => citation.sourceId === ref)) || parsed.data.citations.some(citation => !refs.includes(citation.sourceId)))
-      fail(503, 'invalid_reference', 'The AI provider returned inconsistent source references. Nothing was saved.');
+    const summary = reconcileSourceReferences(parsed.data.summary, parsed.data.citations.map(citation => citation.sourceId));
     const cited = parsed.data.citations.map(citation => {
       const source = sources.find(row => row.id === citation.sourceId)!;
       return `- [${source.id}] ${source.title}${source.start === null ? '' : ` (${clock(source.start)})`}, recording ${source.recordingId}${source.versionId ? `, version ${source.versionId}` : ''}: "${citation.quote.replace(/\s+/g, ' ')}"`;
