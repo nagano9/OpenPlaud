@@ -122,6 +122,51 @@ class PlaudPlugin(private val activity: Activity) : Plugin(activity) {
         else -> arrayOf("storage")
     }
     @Command fun phoneBleStatus(invoke: Invoke) = invoke.resolve(phoneBleValue())
+
+    // The phone's own recording library (PhoneRecordings): permanent, and listed with whether the
+    // paired desktop has confirmed it holds a copy.
+    private fun libraryValue(): JSObject {
+        val onDesktop = PhoneRecordings.onDesktop(activity)
+        val items = org.json.JSONArray()
+        PhoneRecordings.outboxItems(activity).forEach { item ->
+            items.put(org.json.JSONObject().put("id", item.id.toString()).put("name", item.name).put("size", item.size)
+                .put("addedAt", item.recordedAt ?: org.json.JSONObject.NULL).put("onDesktop", item.id in onDesktop))
+        }
+        return JSObject().put("recordings", items)
+    }
+    @Command fun phoneLibrary(invoke: Invoke) = worker.execute {
+        try { val value = libraryValue(); main.post { invoke.resolve(value) } }
+        catch (e: Exception) { main.post { invoke.reject(e.message ?: "The phone library could not be read.") } }
+    }
+    /** Opens Android's file picker for audio; picked files are copied into the phone library. */
+    @Command fun phonePickRecordings(invoke: Invoke) {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/*")
+            .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            .putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("audio/*", "video/3gpp", "application/ogg"))
+        startActivityForResult(invoke, intent, "phonePickResult")
+    }
+    @ActivityCallback fun phonePickResult(invoke: Invoke, result: androidx.activity.result.ActivityResult) {
+        val data = result.data
+        val uris = when {
+            result.resultCode != Activity.RESULT_OK || data == null -> emptyList()
+            data.clipData != null -> (0 until data.clipData!!.itemCount).map { data.clipData!!.getItemAt(it).uri }
+            else -> listOfNotNull(data.data)
+        }
+        worker.execute {
+            var added = 0; val skipped = org.json.JSONArray()
+            for (uri in uris) {
+                val name = runCatching {
+                    activity.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null }
+                }.getOrNull() ?: uri.lastPathSegment ?: "Recording.m4a"
+                val type = runCatching { activity.contentResolver.getType(uri) }.getOrNull().orEmpty()
+                if (!type.startsWith("audio/") && !PhoneRecordings.isAudioName(name)) { skipped.put(name); continue }
+                runCatching { PhoneRecordings.keep(activity, uri, name); added++ }.onFailure { skipped.put(name) }
+            }
+            val value = libraryValue()
+            value.put("added", added); value.put("skipped", skipped)
+            main.post { invoke.resolve(value) }
+        }
+    }
     /** An app update or reboot stops the sync service; bring it back when the app opens if it was on. */
     override fun load(webView: android.webkit.WebView) {
         super.load(webView)

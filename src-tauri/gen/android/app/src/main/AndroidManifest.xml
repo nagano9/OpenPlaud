@@ -46,8 +46,12 @@
             </intent-filter>
             <intent-filter android:label="Import into OpenPlod">
                 <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="audio/*" />
+                <!-- Some recorders share AMR/3GP recordings with these types. -->
+                <data android:mimeType="video/3gpp" />
+                <data android:mimeType="application/ogg" />
             </intent-filter>
         </activity>
 

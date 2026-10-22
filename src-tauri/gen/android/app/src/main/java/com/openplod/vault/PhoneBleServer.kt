@@ -170,6 +170,13 @@ class PhoneBleServer(private val context: Context, private val clientId: String,
                             enqueue(device, frames + PhoneBleProtocol.replyFrames(JSONObject().put("op", "chunk").put("id", id).put("offset", offset)
                                 .put("length", bytes.size).put("sha256", PhoneBleProtocol.sha256Hex(bytes)), frameBytes))
                         }
+                        "imported" -> {
+                            // The desktop now holds these recordings; the phone keeps its own copies.
+                            val ids = request.optJSONArray("ids")
+                            PhoneRecordings.markOnDesktop(context, (0 until (ids?.length() ?: 0)).map { ids!!.getLong(it) })
+                            lastEvent = "Synced with the desktop"
+                            reply(device, JSONObject().put("op", "ok"))
+                        }
                         else -> reply(device, PhoneBleProtocol.error("unknown", "Unknown request"))
                     }
                 }

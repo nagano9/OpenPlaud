@@ -23,6 +23,7 @@ function fakePhone(options: { key?: Buffer; corruptOnce?: boolean } = {}): Packe
       else if (request.op === 'auth') { authed = verifyProof(key, 'desktop', desktopNonce, phoneNonce, request.proof); session = sessionKey(key, desktopNonce, phoneNonce); reply(authed ? { op: 'ready' } : { op: 'error', code: 'auth', message: 'Desktop proof rejected' }); }
       else if (!authed) reply({ op: 'error', code: 'auth', message: 'Not authenticated' });
       else if (request.op === 'list') reply({ op: 'list', sealed: seal(session, Buffer.from(JSON.stringify([recording]))).toString('base64') });
+      else if (request.op === 'imported') reply({ op: 'ok' });
       else if (request.op === 'get') {
         const slice = Buffer.from(audio.subarray(request.offset, request.offset + request.length));
         const sent = seal(session, slice);
@@ -59,6 +60,16 @@ test('downloads verify every chunk and ask again for a corrupted one', async () 
   expect(bytes.equals(audio)).toBe(true);
   expect(phone.requests.filter(request => request.op === 'get' && request.offset === 0)).toHaveLength(2);
   expect(progress.at(-1)).toBe(audio.length);
+});
+
+test('the desktop confirms imports to the phone without asking it to delete anything', async () => {
+  const phone = fakePhone();
+  const session = new PhoneSession(phone, () => ({ key }));
+  await session.open();
+  expect(await session.acknowledge([42])).toBe(true);
+  expect(phone.requests.at(-1)).toEqual({ op: 'imported', ids: [42] });
+  expect(phone.requests.some(request => /delete|remove/.test(String(request.op)))).toBe(false);
+  expect(await session.acknowledge([])).toBe(true);
 });
 
 test('sealed data opens only with the session key it was sealed with', () => {

@@ -4,6 +4,7 @@ import { transcripts, recordings, analyses } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { textSelection } from '../ai/config';
 import { completeText, textProvenance, type TextProvenance } from '../ai/text';
+import { mayAutoTitle } from '../library/title-state';
 
 const summarySchema = z.object({ overview: z.string().min(1), keyPoints: z.array(z.string()), participants: z.array(z.string()).optional(), topics: z.array(z.string()).optional() }).strict();
 const taskSchema = z.object({ title: z.string().min(1), description: z.string().optional(), assignee: z.string().optional(), priority: z.enum(['low', 'medium', 'high']).optional(), dueDate: z.string().optional(), context: z.string().min(1) }).strict();
@@ -55,10 +56,11 @@ export class RecordingAnalyzer {
       tx.update(transcripts).set({ ...result, analyzedAt }).where(eq(transcripts.id, transcript.id)).run();
       tx.insert(analyses).values({ id: analysisId, recordingId, ...result, analyzedAt }).run();
       sqlite.query('UPDATE analyses SET provenance=? WHERE id=?').run(JSON.stringify(provenance), analysisId);
-      // Revision 1 means nobody has edited the metadata, so an AI title replaces only the import filename.
-      if (title?.success && active.revision === 1) {
+      // An AI title replaces only the import filename, once, and never a title the person typed.
+      if (title?.success && mayAutoTitle(sqlite, recordingId)) {
         const extension = active.originalFilename?.match(/\.[^.]+$/)?.[0] ?? '';
-        tx.update(recordings).set({ originalFilename: `${title.data}${extension}`, revision: 2 }).where(eq(recordings.id, recordingId)).run();
+        tx.update(recordings).set({ originalFilename: `${title.data}${extension}`, revision: active.revision + 1 }).where(eq(recordings.id, recordingId)).run();
+        sqlite.query('UPDATE recordings SET auto_titled_at=? WHERE id=?').run(analyzedAt, recordingId);
       }
     });
     return { ...result, analyzedAt, provenance };

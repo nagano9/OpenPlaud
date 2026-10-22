@@ -71,6 +71,8 @@ export const helloReply = z.object({
   device: z.string().max(120), nonce: z.string().min(16).max(64), proof: z.string().min(16).max(128),
 }).strict();
 export const readyReply = z.object({ op: z.literal('ready') }).strict();
+/** The phone's answer to `{ op: 'imported', ids }`. */
+export const okReply = z.object({ op: z.literal('ok') }).strict();
 export const phoneRecording = z.object({
   id: z.number().int().nonnegative().max(2 ** 53 - 1), size: z.number().int().nonnegative(),
   name: z.string().max(240), recordedAt: z.string().max(40).nullable(), mime: z.string().max(80),

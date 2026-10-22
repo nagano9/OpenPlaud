@@ -1,4 +1,4 @@
-import { chunkReply, errorReply, FrameReader, helloReply, listReply, nonce, open, PHONE_CHUNK_BYTES, PHONE_PROTOCOL_VERSION, proof, readyReply, recordingList, sessionKey, sha256Hex, verifyProof, type PhoneRecording } from './protocol';
+import { chunkReply, errorReply, FrameReader, helloReply, listReply, nonce, okReply, open, PHONE_CHUNK_BYTES, PHONE_PROTOCOL_VERSION, proof, readyReply, recordingList, sessionKey, sha256Hex, verifyProof, type PhoneRecording } from './protocol';
 
 /** The part of the Bluetooth bridge transport a phone session uses (`PlaudTransport` fits). */
 export interface PacketChannel {
@@ -86,6 +86,17 @@ export class PhoneSession {
       options.onProgress?.(offset, recording.size);
     }
     return Buffer.concat(parts);
+  }
+
+  /**
+   * Tells the phone these recordings are now in the vault, so it can show them as "on the desktop".
+   * The phone keeps its copies. Best effort: an older phone app that does not know the request
+   * answers with an error, which changes nothing.
+   */
+  async acknowledge(ids: number[]): Promise<boolean> {
+    if (!ids.length) return true;
+    try { await this.send({ op: 'imported', ids }); return okReply.safeParse(await this.reply()).success; }
+    catch { return false; }
   }
 
   async close() { await this.send({ op: 'bye' }).catch(() => undefined); }

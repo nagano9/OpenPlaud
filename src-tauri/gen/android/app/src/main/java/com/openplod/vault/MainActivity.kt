@@ -15,6 +15,9 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.util.UUID
 
+/** File extensions accepted from a share whose MIME type is generic. */
+private val AUDIO_EXTENSIONS = setOf("m4a", "mp4", "aac", "mp3", "ogg", "opus", "wav", "flac", "amr", "3gp", "3ga", "webm", "wma")
+
 class MainActivity : TauriActivity() {
   private data class SharedAudio(
     val id: String,
@@ -49,11 +52,20 @@ class MainActivity : TauriActivity() {
   }
 
   private fun receiveSharedAudio(intent: Intent?) {
-    if (intent?.action != Intent.ACTION_SEND || intent.type?.startsWith("audio/") != true) return
-    val uri = intent.clipData?.getItemAt(0)?.uri ?: streamUri(intent) ?: return
+    if (intent?.action != Intent.ACTION_SEND && intent?.action != Intent.ACTION_SEND_MULTIPLE) return
+    val uri = intent.clipData?.getItemAt(0)?.uri ?: streamUri(intent) ?: streamUris(intent).firstOrNull()
+    android.util.Log.i("OpenPlodShare", "received action=${intent.action} type=${intent.type} items=${intent.clipData?.itemCount ?: 0} hasUri=${uri != null}")
+    if (uri == null) return
+    // Recorder apps label audio inconsistently (audio/*, */*, application/octet-stream); the file decides.
+    val name = displayName(uri)
+    val resolvedType = runCatching { contentResolver.getType(uri) }.getOrNull()
+    val audio = listOfNotNull(intent.type, resolvedType).any { it.startsWith("audio/") } ||
+      name?.substringAfterLast('.', "")?.lowercase() in AUDIO_EXTENSIONS
+    android.util.Log.i("OpenPlodShare", "uri type=$resolvedType name=$name audio=$audio")
+    if (!audio) return
 
     runCatching {
-      val filename = sanitizeFilename(displayName(uri) ?: "plaud-recording.m4a")
+      val filename = sanitizeFilename(name ?: "plaud-recording.m4a")
       val inbox = File(filesDir, "shared-audio").apply { mkdirs() }
       val id = UUID.randomUUID().toString()
       val target = File(inbox, "$id-$filename")
@@ -61,14 +73,17 @@ class MainActivity : TauriActivity() {
         target.outputStream().use { output -> input.copyTo(output) }
       } ?: error("The shared audio stream could not be opened.")
 
-      // With Bluetooth sync on, the desktop can also copy this recording without Wi-Fi.
-      if (PhoneBleSyncService.preferences(this).getBoolean("enabled", false)) runCatching { PhoneRecordings.keep(this, target, filename) }
+      // Every shared recording also joins the phone's own library: it stays on the phone, and with
+      // Bluetooth sync on the desktop copies it without Wi-Fi.
+      runCatching { PhoneRecordings.keep(this, target, filename) }
+        .onFailure { android.util.Log.w("OpenPlodShare", "Adding to the phone library failed", it) }
+        .onSuccess { android.util.Log.i("OpenPlodShare", "kept $filename in the phone library") }
       pendingShare?.file?.delete()
       pendingShare = SharedAudio(
         id = id,
         file = target,
         filename = filename,
-        mimeType = intent.type ?: contentResolver.getType(uri) ?: "audio/mp4",
+        mimeType = listOfNotNull(intent.type, resolvedType).firstOrNull { it.startsWith("audio/") } ?: "audio/mp4",
         durationMs = audioDuration(target),
         sourcePackage = shareSource(intent, uri),
       )
@@ -76,7 +91,10 @@ class MainActivity : TauriActivity() {
   }
 
   @Suppress("DEPRECATION")
-  private fun streamUri(intent: Intent): Uri? = intent.getParcelableExtra(Intent.EXTRA_STREAM)
+  private fun streamUri(intent: Intent): Uri? = runCatching { intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) }.getOrNull()
+
+  @Suppress("DEPRECATION")
+  private fun streamUris(intent: Intent): List<Uri> = runCatching { intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM) }.getOrNull().orEmpty()
 
   private fun displayName(uri: Uri): String? {
     if (uri.scheme == "file") return uri.lastPathSegment

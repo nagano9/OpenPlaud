@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import { initializeMobileSync } from './mobile-schema';
+import { markTitleEdited } from '../library/title-state';
 
 /**
  * Desktop -> client change feed and client -> desktop metadata push (MOB-04).
@@ -189,6 +190,8 @@ export class ChangeFeed {
       recordingId, baseRevision as number);
     // `changes` would also count the feed triggers' rows, so check the returned row instead.
     if (!updated) return { changeId, recordingId, status: 'conflict', current: this.toFeed(this.recording(recordingId)!, this.head()) };
+    // A title typed on the phone is the person's choice too; no AI title replaces it.
+    if (typeof next.title === 'string') markTitleEdited(this.sqlite, recordingId);
     return { changeId, recordingId, status: 'applied', revision: (baseRevision as number) + 1 };
   }
 }

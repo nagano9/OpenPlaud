@@ -7,6 +7,7 @@ import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { RecordingBookmarks } from '../library/bookmarks';
 import { db, sqlite } from '../db/client';
+import { markTitleEdited } from '../library/title-state';
 import { recordings, transcripts, userSettings } from '../db/schema';
 import { SUBTITLE_MIME, isSubtitleFormat, renderSubtitles, subtitleReadiness } from '../library/subtitle-export';
 import { applyOperation, parseSegments, speakerLabels, type TranscriptOperation } from '../library/transcript-operations';
@@ -201,6 +202,8 @@ app.patch('/:id', async c => {
     revision: recording.revision + 1,
   };
   await db.update(recordings).set(changes).where(eq(recordings.id, id));
+  // A title the person typed is never replaced by an AI title.
+  if (body.title && changes.originalFilename !== recording.originalFilename) markTitleEdited(sqlite, id);
   return c.json({ success: true, data: { ...recording, ...changes } });
 });
 

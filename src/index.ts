@@ -216,7 +216,9 @@ app.route('/api/ai-settings', createAiSettingsApi(sqlite));
 app.route('/api/vault', createVaultApi(sqlite));
 const devices = new DeviceRegistry();
 devices.register(automaticPlaud);
-devices.register(new DeviceAutoImport(sqlite, phoneDriver({ clients: mobileClients, queue: queueRecordingProcessing })));
+devices.register(new DeviceAutoImport(sqlite, phoneDriver({ clients: mobileClients, queue: queueRecordingProcessing,
+  inVault: sourceIds => (sqlite.query("SELECT source_recording_id AS id FROM recordings WHERE source_provider='phone' AND source_recording_id IN (SELECT value FROM json_each(?))")
+    .all(JSON.stringify(sourceIds)) as { id: string }[]).map(row => row.id) })));
 const bluetoothInbox = new BluetoothInbox(sqlite, queueRecordingProcessing);
 app.route('/api/devices', createDevicesApi(devices, bluetoothInbox));
 app.route('/api/onboarding', createOnboardingApi(sqlite, () => new TranscriptionRouter({}, readSettings(sqlite)).status()));

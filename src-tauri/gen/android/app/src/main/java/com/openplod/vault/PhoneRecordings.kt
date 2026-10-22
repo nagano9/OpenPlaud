@@ -90,31 +90,53 @@ class PhoneRecordings(private val context: Context) {
     }
 
     companion object {
-        /** Outbox ids sit far above MediaStore row ids: 2^50 + the time the file was kept. */
+        /** Library ids sit far above MediaStore row ids: 2^50 + the time the file was added. */
         const val OUTBOX_BASE = 1L shl 50
-        /** Shared copies are removed after this long; the desktop has long imported them by then. */
-        private const val OUTBOX_DAYS = 30L
         private val extensions = mapOf("m4a" to "audio/mp4", "mp4" to "audio/mp4", "aac" to "audio/aac", "mp3" to "audio/mpeg", "ogg" to "audio/ogg",
-            "opus" to "audio/opus", "wav" to "audio/wav", "flac" to "audio/flac", "amr" to "audio/amr", "3gp" to "audio/3gpp", "webm" to "audio/webm")
+            "opus" to "audio/opus", "wav" to "audio/wav", "flac" to "audio/flac", "amr" to "audio/amr", "3gp" to "audio/3gpp", "3ga" to "audio/3gpp",
+            "webm" to "audio/webm", "wma" to "audio/x-ms-wma")
 
+        /**
+         * The phone's own recording library: audio shared to OpenPlod or picked from files. It is
+         * permanent: syncing, pairing, unpairing or re-pairing never deletes from it, and the desktop
+         * keeps its own copy. Only the person removes files, from Android's app storage settings.
+         */
         private fun outbox(context: Context) = java.io.File(context.filesDir, "bluetooth-outbox").apply { mkdirs() }
+        private fun imported(context: Context) = PhoneBleSyncService.preferences(context)
 
-        /** Keeps a copy of shared audio for the desktop to copy over Bluetooth. */
-        fun keep(context: Context, source: java.io.File, name: String) {
-            val id = OUTBOX_BASE + System.currentTimeMillis()
-            source.copyTo(java.io.File(outbox(context), "$id-${name.take(160)}"), overwrite = false)
+        fun isAudioName(name: String) = name.substringAfterLast('.', "").lowercase() in extensions
+
+        /** Adds a copy of audio to the library; returns its id. */
+        fun keep(context: Context, source: java.io.File, name: String): Long = keep(context, name) { target -> source.copyTo(target, overwrite = false) }
+
+        /** Adds audio from a content URI (file picker or share) to the library; returns its id. */
+        fun keep(context: Context, uri: android.net.Uri, name: String): Long = keep(context, name) { target ->
+            (context.contentResolver.openInputStream(uri) ?: throw IOException("The file could not be opened.")).use { input -> target.outputStream().use { input.copyTo(it) } }
+        }
+
+        private fun keep(context: Context, name: String, write: (java.io.File) -> Unit): Long {
+            var id = OUTBOX_BASE + System.currentTimeMillis()
+            while (outboxFile(context, id) != null) id++
+            val clean = name.replace(Regex("[^\\p{L}\\p{N}._ ()-]"), "_").take(160).ifBlank { "Recording.m4a" }
+            val target = java.io.File(outbox(context), "$id-$clean")
+            try { write(target) } catch (error: Exception) { target.delete(); throw error }
+            return id
         }
 
         private fun outboxFile(context: Context, id: Long) = outbox(context).listFiles()?.firstOrNull { it.name.startsWith("$id-") }
 
-        fun outboxItems(context: Context): List<Item> {
-            val expired = System.currentTimeMillis() - OUTBOX_DAYS * 86_400_000L
-            return (outbox(context).listFiles() ?: emptyArray()).mapNotNull { file ->
-                val id = file.name.substringBefore('-').toLongOrNull() ?: return@mapNotNull null
-                if (id - OUTBOX_BASE < expired) { file.delete(); return@mapNotNull null }
-                val name = file.name.substringAfter('-')
-                Item(id, file.length(), name, id - OUTBOX_BASE, extensions[name.substringAfterLast('.', "").lowercase()] ?: "audio/mp4")
-            }.sortedByDescending { it.id }
+        fun outboxItems(context: Context): List<Item> = (outbox(context).listFiles() ?: emptyArray()).mapNotNull { file ->
+            val id = file.name.substringBefore('-').toLongOrNull() ?: return@mapNotNull null
+            val name = file.name.substringAfter('-')
+            Item(id, file.length(), name, id - OUTBOX_BASE, extensions[name.substringAfterLast('.', "").lowercase()] ?: "audio/mp4")
+        }.sortedByDescending { it.id }
+
+        /** Recordings the desktop confirmed it holds (it says so after each import). */
+        fun markOnDesktop(context: Context, ids: List<Long>) {
+            val current = imported(context).getStringSet("onDesktop", emptySet()).orEmpty()
+            imported(context).edit().putStringSet("onDesktop", current + ids.map(Long::toString)).apply()
         }
+
+        fun onDesktop(context: Context): Set<Long> = imported(context).getStringSet("onDesktop", emptySet()).orEmpty().mapNotNull { it.toLongOrNull() }.toSet()
     }
 }

@@ -40,7 +40,11 @@ async function connectWithBridge(): Promise<PhoneConnection> {
  * desktop (Android page) and have “Sync over Bluetooth” on; recordings are copied, never
  * removed from the phone, and identified as `${clientId}:${recordingId}`.
  */
-export function phoneDriver(deps: { clients: () => MobileClientStore; queue: Queue; connect?: () => Promise<PhoneConnection>; bridgeAvailable?: () => boolean }): RecordingSourceDriver {
+export function phoneDriver(deps: {
+  clients: () => MobileClientStore; queue: Queue; connect?: () => Promise<PhoneConnection>; bridgeAvailable?: () => boolean;
+  /** Which of these `clientId:recordingId` source ids the vault already holds. */
+  inVault?: (sourceIds: string[]) => string[];
+}): RecordingSourceDriver {
   const connect = deps.connect ?? connectWithBridge;
   const bridgeAvailable = deps.bridgeAvailable ?? (() => isDesktopPlatform() && findRustBridge() !== null);
   const keys: KeyLookup = clientId => deps.clients().bluetoothKey(clientId);
@@ -62,8 +66,14 @@ export function phoneDriver(deps: { clients: () => MobileClientStore; queue: Que
     id: 'phone', label: 'Android phone', provider: 'phone',
     notConfiguredMessage: 'Pair an Android phone on the Android page first. Bluetooth sync also needs the OpenPlod Bluetooth bridge.',
     configured: () => bridgeAvailable() && deps.clients().bluetoothClients().length > 0,
-    list: () => withSession(async session => ({ serial: session.clientId, checkedAt: new Date().toISOString(),
-      sessions: (await session.list()).map(recording => ({ sessionId: recording.id, size: recording.size })) })),
+    list: () => withSession(async session => {
+      const recordings = await session.list();
+      // Recordings this vault already holds (from an earlier sync, before a reinstall, or over Wi-Fi)
+      // are confirmed to the phone so it can show them as on the desktop.
+      const held = new Set(deps.inVault?.(recordings.map(recording => `${session.clientId}:${recording.id}`)) ?? []);
+      await session.acknowledge(recordings.filter(recording => held.has(`${session.clientId}:${recording.id}`)).map(recording => recording.id));
+      return { serial: session.clientId, checkedAt: new Date().toISOString(), sessions: recordings.map(recording => ({ sessionId: recording.id, size: recording.size })) };
+    }),
     import: sessionId => withSession(async session => {
       const recording = (await session.list()).find(item => item.id === sessionId);
       if (!recording) throw new Error('The recording is no longer on the phone.');
@@ -81,6 +91,7 @@ export function phoneDriver(deps: { clients: () => MobileClientStore; queue: Que
         });
         if (result.added) await deps.queue({ recordingId: result.recording.id, filePath: result.recording.filePath });
         deps.clients().markSynced(session.clientId);
+        await session.acknowledge([recording.id]);
         return result;
       } finally { await rm(directory, { recursive: true, force: true }); }
     }),
