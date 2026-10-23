@@ -278,6 +278,7 @@ button:focus-visible, a:focus-visible, select:focus-visible { outline: 2px solid
 .capture-fields textarea, .metadata-form textarea, .metadata-form input { width: 100%; border: 1px solid var(--input); border-radius: 6px; background: var(--background); padding: 11px 12px; color: var(--foreground); outline: none; }
 .capture-fields textarea:focus, .metadata-form textarea:focus, .metadata-form input:focus { border-color: var(--ring); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 16%, transparent); }
 .capture-upload { width: 100%; gap: 9px; }
+.capture-note { color: var(--muted-foreground); font-size: 12px; text-align: center; }
 .capture-offline, .capture-error { display: flex; width: min(100%, 520px); align-items: flex-start; gap: 9px; border: 1px solid color-mix(in srgb, var(--neutral) 34%, var(--border)); border-radius: 7px; background: color-mix(in srgb, var(--neutral) 9%, var(--card)); padding: 11px 12px; color: var(--foreground); text-align: left; font-size: 12px; line-height: 1.45; }
 .capture-offline svg { width: 17px; height: 17px; flex: 0 0 auto; color: var(--neutral); }
 .capture-stored { gap: 8px; }

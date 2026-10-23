@@ -127,16 +127,50 @@ class PlaudPlugin(private val activity: Activity) : Plugin(activity) {
     // paired desktop has confirmed it holds a copy.
     private fun libraryValue(): JSObject {
         val onDesktop = PhoneRecordings.onDesktop(activity)
+        val offered = PhoneRecordings.offered(activity)
         val items = org.json.JSONArray()
         PhoneRecordings.outboxItems(activity).forEach { item ->
             items.put(org.json.JSONObject().put("id", item.id.toString()).put("name", item.name).put("size", item.size)
-                .put("addedAt", item.recordedAt ?: org.json.JSONObject.NULL).put("onDesktop", item.id in onDesktop))
+                .put("addedAt", item.recordedAt ?: org.json.JSONObject.NULL).put("onDesktop", item.id in onDesktop).put("send", item.id in offered))
         }
-        return JSObject().put("recordings", items)
+        val value = JSObject().put("recordings", items)
+        value.put("autoSend", PhoneRecordings.autoSend(activity))
+        return value
     }
-    @Command fun phoneLibrary(invoke: Invoke) = worker.execute {
-        try { val value = libraryValue(); main.post { invoke.resolve(value) } }
-        catch (e: Exception) { main.post { invoke.reject(e.message ?: "The phone library could not be read.") } }
+    /** Runs library work off the main thread and answers with the updated library. */
+    private fun libraryCommand(invoke: Invoke, failure: String, work: () -> Unit) = worker.execute {
+        try { work(); val value = libraryValue(); main.post { invoke.resolve(value) } }
+        catch (e: Exception) { main.post { invoke.reject(e.message ?: failure) } }
+    }
+    @Command fun phoneLibrary(invoke: Invoke) = libraryCommand(invoke, "The phone library could not be read.") {}
+    /** Marks one recording to be copied by the desktop, or takes it back; the phone keeps it either way. */
+    @Command fun phoneSetSend(invoke: Invoke) = libraryCommand(invoke, "The recording could not be updated.") {
+        val id = invoke.getArgs().getString("id").toLong()
+        check(PhoneRecordings.exists(activity, id)) { "This recording is no longer on the phone." }
+        PhoneRecordings.setOffered(activity, id, invoke.getArgs().getBoolean("send"))
+    }
+    @Command fun phoneSetAutoSend(invoke: Invoke) = libraryCommand(invoke, "The setting could not be saved.") {
+        PhoneRecordings.setAutoSend(activity, invoke.getArgs().getBoolean("enabled"))
+    }
+    // OpenPlod's own recorder hands its audio over in base64 chunks, then names it.
+    @Command fun phoneRecordingBegin(invoke: Invoke) = worker.execute {
+        try { val upload = PhoneRecordings.beginRecording(activity); main.post { invoke.resolve(JSObject().put("upload", upload)) } }
+        catch (e: Exception) { main.post { invoke.reject(e.message ?: "The recording could not be saved on this phone.") } }
+    }
+    @Command fun phoneRecordingAppend(invoke: Invoke) = worker.execute {
+        try {
+            val args = invoke.getArgs()
+            PhoneRecordings.appendRecording(activity, args.getString("upload"), android.util.Base64.decode(args.getString("data"), android.util.Base64.NO_WRAP))
+            main.post { invoke.resolve(JSObject()) }
+        } catch (e: Exception) { main.post { invoke.reject(e.message ?: "The recording could not be saved on this phone.") } }
+    }
+    @Command fun phoneRecordingFinish(invoke: Invoke) {
+        val args = invoke.getArgs()
+        var saved = 0L
+        libraryCommand(invoke, "The recording could not be saved on this phone.") {
+            saved = PhoneRecordings.finishRecording(activity, args.getString("upload"), args.getString("name"), args.getBoolean("send"))
+            android.util.Log.i("OpenPlodShare", "saved in-app recording $saved on the phone")
+        }
     }
     /** Opens Android's file picker for audio; picked files are copied into the phone library. */
     @Command fun phonePickRecordings(invoke: Invoke) {

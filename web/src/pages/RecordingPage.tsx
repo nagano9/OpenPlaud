@@ -12,6 +12,7 @@ import { formatDuration } from '@/lib/utils'
 import { completePendingAndroidShare, readPendingAndroidShare } from '@/lib/android-share'
 import { formatDate, t } from '@/i18n'
 import { useAudioInputs } from '@/lib/audio-inputs'
+import { hasPhoneLibrary, phoneLibrary, saveToPhone } from '@/lib/phone-library'
 
 type CaptureState = 'idle' | 'requesting' | 'recording' | 'paused' | 'review' | 'uploading' | 'stored'
 
@@ -29,6 +30,9 @@ export function RecordingPage() {
   const [error, setError] = useState('')
   const [progress, setProgress] = useState<number | null>(null)
   const [outboxVersion, setOutboxVersion] = useState(0)
+  const [storedText, setStoredText] = useState('')
+  const [autoSend, setAutoSend] = useState(false)
+  useEffect(() => { if (hasPhoneLibrary()) phoneLibrary.list().then(library => setAutoSend(library.autoSend)).catch(() => undefined) }, [])
   const { inputs, inputId, chooseInput, refreshInputs } = useAudioInputs()
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -254,6 +258,34 @@ export function RecordingPage() {
     }
   }
 
+  /**
+   * Android: the recording is kept permanently on this phone first. Sending it to the computer is a
+   * choice; when the vault is not reachable now, Bluetooth sync delivers it later.
+   */
+  const keepOnPhone = async (send: boolean) => {
+    if (!capture) return
+    setState('uploading'); setError(''); setProgress(null)
+    const filename = `${slugify(title)}.${extensionForMimeType(capture.blob.type)}`
+    try {
+      await saveToPhone(capture.blob, filename, send, (done, total) => setProgress(total ? done / total : null))
+      let delivered = false
+      if (send && runtime.paired) {
+        const pending = (await updateCapture(capture.id, { title, context, filename }).catch(() => null)) ?? { ...capture, title, context, filename }
+        delivered = await deliverCapture(pending, true).then(() => true, () => false)
+      }
+      // The phone library now holds the recording, so the temporary browser copy is not needed.
+      await removePendingCapture(capture.id).catch(() => undefined)
+      setStoredText(!send ? t('Saved on this phone. Send it to the computer any time from Recordings on this phone.')
+        : delivered ? t('Saved on this phone and sent to the computer.')
+          : t('Saved on this phone. It will be sent to the computer over Bluetooth.'))
+      // No automatic jump to the phone list: a late tap there could land on "Send to computer".
+      setState('stored')
+    } catch (saveError) {
+      setState('review')
+      setError(t('Could not save on this phone: {error}. The recording is still in the outbox.', { error: saveError instanceof Error ? saveError.message : String(saveError) }))
+    } finally { setProgress(null) }
+  }
+
   const discard = async () => {
     if (capture && !window.confirm(t('Discard this local recording?'))) return
     if (capture) await removePendingCapture(capture.id).catch(() => undefined)
@@ -316,7 +348,9 @@ export function RecordingPage() {
             </div>
           </div>
         ) : state === 'stored' ? (
-          <div className="capture-stored" role="status"><span><Check /></span><h1>{t('Stored in your vault')}</h1><p>{t('Opening the recording...')}</p></div>
+          <div className="capture-stored" role="status"><span><Check /></span>
+            {storedText ? <><h1>{t('Saved on this phone')}</h1><p>{storedText}</p><Button variant="outline" onClick={() => navigate('/devices', { replace: true })}>{t('Recordings on this phone')}</Button></> :<><h1>{t('Stored in your vault')}</h1><p>{t('Opening the recording...')}</p></>}
+          </div>
         ) : (
           <div className="capture-review">
             {capture?.sourceProvider === 'plaud' && <div className="capture-source"><FileAudio />{t('Plaud audio received')}</div>}
@@ -326,10 +360,18 @@ export function RecordingPage() {
               <label>{t('Title')}<Input value={title} onChange={event => setTitle(event.target.value)} maxLength={120} /></label>
               <label>{t('Context')}<textarea value={context} onChange={event => setContext(event.target.value)} placeholder={t('Meeting, idea, voice note...')} rows={3} /></label>
             </div>
-            <Button size="lg" className="capture-upload" onClick={() => void upload()} disabled={state === 'uploading' || !title.trim()}>
+            {hasPhoneLibrary() && capture?.sourceProvider !== 'plaud' ? <>
+              {/* On the phone, saving keeps the recording here; sending to the computer is a choice. */}
+              <Button size="lg" className="capture-upload" onClick={() => void keepOnPhone(autoSend)} disabled={state === 'uploading' || !title.trim()}>
+                {state === 'uploading' ? <Loader2 className="animate-spin" /> : <Check />}
+                {state === 'uploading' ? progress !== null && progress < 1 ? t('Saving {percent}%...', { percent: Math.round(progress * 100) }) : t('Saving on this phone...') : autoSend ? t('Save on phone and send') : t('Save on this phone')}
+              </Button>
+              {!autoSend && <Button variant="outline" onClick={() => void keepOnPhone(true)} disabled={state === 'uploading' || !title.trim()}><UploadCloud />{t('Save and send to computer')}</Button>}
+              <p className="capture-note">{autoSend ? t('New recordings are sent to the computer automatically. Change this in Recordings on this phone.') : t('Recordings stay on this phone unless you send them.')}</p>
+            </> : <Button size="lg" className="capture-upload" onClick={() => void upload()} disabled={state === 'uploading' || !title.trim()}>
               {state === 'uploading' ? <Loader2 className="animate-spin" /> : <UploadCloud />}
               {state === 'uploading' ? progress !== null && progress < 1 ? t('Sending {percent}%...', { percent: Math.round(progress * 100) }) : t('Storing in vault...') : t('Store in desktop vault')}
-            </Button>
+            </Button>}
             {error && <div className="capture-offline" role="alert"><WifiOff /><span>{error}</span></div>}
             <Button variant="ghost" onClick={() => void discard()} disabled={state === 'uploading'}><RotateCcw />{t('Record again')}</Button>
           </div>
