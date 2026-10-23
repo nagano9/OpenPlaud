@@ -1,10 +1,10 @@
 import { api } from './api'
 import { sha256Hex } from './mobile-upload'
 import { deviceCommand, supportsPlaudDevice } from './plaud-device'
-import { getRuntime } from './runtime'
+import { apiUrl, authenticatedHeaders, getRuntime } from './runtime'
 
 /** The Android app's own recording library (PhoneRecordings.kt). */
-export interface PhoneRecording { id: string; name: string; size: number; addedAt: number | null; onDesktop: boolean; send: boolean; inFolder?: boolean }
+export interface PhoneRecording { id: string; name: string; size: number; addedAt: number | null; onDesktop: boolean; send: boolean; inFolder?: boolean; transcribed?: boolean }
 export interface PhoneLibrary { recordings: PhoneRecording[]; autoSend: boolean; folder?: string; added?: number; skipped?: string[] }
 
 /** Recordings made in OpenPlod on an Android phone are kept in the phone library. */
@@ -81,9 +81,12 @@ export async function sendToComputer(item: PhoneRecording, onProgress?: (done: n
   if (getRuntime().paired) {
     try {
       const blob = await readRecording(item, onProgress)
+      const fingerprint = await sha256Hex(blob)
+      // A transcript made on the phone goes first, so the computer stores it instead of paying again.
+      if (item.transcribed) await offerTranscript(item, fingerprint).catch(() => undefined)
       await api.uploadRecording(new File([blob], item.name, { type: blob.type }), true,
         { recordedAt: item.addedAt ? new Date(item.addedAt).toISOString() : undefined, recordingType: 'other' },
-        { fingerprint: await sha256Hex(blob) })
+        { fingerprint })
       return { via: 'wifi', library: await deviceCommand<PhoneLibrary>('phoneMarkOnDesktop', { id: item.id }) }
     } catch (error) {
       // Kept for the person: Bluetooth sync delivers it later, but they should know why Wi-Fi failed.
@@ -98,4 +101,28 @@ export const phoneLibrary = {
   pick: () => deviceCommand<PhoneLibrary>('phonePickRecordings'),
   setSend: (id: string, send: boolean) => deviceCommand<PhoneLibrary>('phoneSetSend', { id, send }),
   setAutoSend: (enabled: boolean) => deviceCommand<PhoneLibrary>('phoneSetAutoSend', { enabled }),
+}
+
+/** Phone transcription (PhoneTranscriber.kt) with the person's own OpenAI key. */
+export interface TranscriptionJob { state: 'queued' | 'running' | 'failed'; done?: number; total?: number; error?: string }
+export interface PhoneTranscription { hasKey: boolean; keyHint: string | null; language: string; model: string; jobs: Record<string, TranscriptionJob> }
+export interface PhoneTranscript { text: string; segments: { start: number; end: number; text: string }[]; model: string; language: string | null; durationSeconds: number; createdAt: number }
+
+export const phoneTranscription = {
+  status: () => deviceCommand<PhoneTranscription>('transcriptionStatus'),
+  setKey: (key: string) => deviceCommand<PhoneTranscription>('transcriptionSetKey', { key }),
+  clearKey: () => deviceCommand<PhoneTranscription>('transcriptionClearKey'),
+  setLanguage: (language: string) => deviceCommand<PhoneTranscription>('transcriptionSetLanguage', { language }),
+  transcribe: (id: string) => deviceCommand<PhoneTranscription>('transcribe', { id }),
+  get: (id: string) => deviceCommand<PhoneTranscript>('transcriptGet', { id }),
+}
+
+async function offerTranscript(item: PhoneRecording, fingerprint: string) {
+  const transcript = await phoneTranscription.get(item.id)
+  const response = await fetch(apiUrl('/mobile/transcripts'), {
+    method: 'POST',
+    headers: authenticatedHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ fingerprint, fullText: transcript.text, segments: transcript.segments, provider: 'openai', model: transcript.model, language: transcript.language, durationSeconds: transcript.durationSeconds }),
+  })
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
 }

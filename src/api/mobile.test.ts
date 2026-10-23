@@ -220,6 +220,25 @@ describe('resumable uploads (MOB-02, MOB-05)', () => {
     const response = await mobileApi.request('/recordings', { method: 'POST', headers: { 'X-OpenPlod-Token': PAIRING }, body });
     expect(response.status).toBe(201);
   });
+
+  test('a transcript made on the phone is stored instead of transcribing again', async () => {
+    const bytes = audio('phone-transcribed', 700);
+    const fingerprint = sha(bytes);
+    const offered = await call('/transcripts', PAIRING, { method: 'POST', json: { fingerprint, fullText: 'Rapat dimulai.', segments: [{ start: 0, end: 4, text: 'Rapat dimulai.' }], model: 'gpt-transcribe', language: 'id', durationSeconds: 4 } });
+    expect(offered.status).toBe(200);
+    expect(offered.json.data.attached).toBe(false);
+    expect((await call('/transcripts', PAIRING, { method: 'POST', json: { fingerprint: 'nope', fullText: 'x' } })).status).toBe(400);
+
+    const body = new FormData();
+    body.append('file', new File([bytes], 'phone.m4a', { type: 'audio/mp4' }));
+    body.append('fingerprint', fingerprint);
+    const response = await mobileApi.request('/recordings', { method: 'POST', headers: { 'X-OpenPlod-Token': PAIRING }, body });
+    expect(response.status).toBe(201);
+    const { recordingId } = (await response.json() as Json).data;
+    const jobs = (sqlite.query('SELECT payload FROM processing_jobs').all() as { payload: string }[]).map(row => JSON.parse(row.payload));
+    const job = jobs.find(entry => entry.data?.recordingId === recordingId);
+    expect(job?.data.provided).toMatchObject({ fullText: 'Rapat dimulai.', model: 'gpt-transcribe', language: 'id', durationSeconds: 4 });
+  });
 });
 
 describe('change feed and metadata push (MOB-04)', () => {

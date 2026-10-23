@@ -264,6 +264,8 @@ class PhoneRecordings(private val context: Context) {
             }
         }
 
+        /** The library file for a recording, or null once it is gone. */
+        fun libraryFile(context: Context, id: Long): java.io.File? = outboxFile(context, id)
         private fun outboxFile(context: Context, id: Long) = outbox(context).listFiles()?.firstOrNull { it.name.startsWith("$id-") }
 
         fun outboxItems(context: Context): List<Item> = (outbox(context).listFiles() ?: emptyArray()).mapNotNull { file ->

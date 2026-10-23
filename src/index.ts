@@ -27,7 +27,8 @@ import { DeviceRegistry } from './devices/registry';
 import { BluetoothInbox } from './devices/bluetooth-inbox';
 import { DeviceAutoImport } from './devices/auto-import';
 import { phoneDriver } from './devices/phone/driver';
-import { queueRecordingProcessing } from './library/processing';
+import { queueRecordingProcessing, type ProvidedTranscript } from './library/processing';
+import type { TranscriptionResult } from './transcription/types';
 import { recordings, userSettings } from './db/schema';
 import { eq } from 'drizzle-orm';
 import { searchTranscripts } from './search/transcripts';
@@ -79,6 +80,15 @@ function textProviderReady() {
   try { textSelection(sqlite, 'analysis'); return true; } catch { return false; }
 }
 
+function providedResult(transcript: ProvidedTranscript): TranscriptionResult {
+  const text = transcript.fullText.trim();
+  return { success: true, engine: transcript.provider, fullText: text,
+    segments: transcript.segments.map(segment => ({ ...segment, confidence: null })),
+    wordCount: text ? text.split(/\s+/).length : 0, speakerCount: null, confidence: null,
+    duration: transcript.durationSeconds ?? transcript.segments.at(-1)?.end ?? 0,
+    metadata: { model: transcript.model, language: transcript.language, usage: null, transcribedOn: 'phone' } };
+}
+
 jobQueue.register('process-recording', async (data: any, job) => {
   // An explicit provider comparison (TS-11) saves an independent version and nothing else.
   if (data.compare) return runComparison(sqlite, data, job);
@@ -93,7 +103,9 @@ jobQueue.register('process-recording', async (data: any, job) => {
   // The profile is resolved when the job runs, so provenance records exactly what was sent.
   const { config, options, profile, ignored } = effectiveTranscription(sqlite, aiConfigSchema.parse(data.config));
   const currentConfig = readAiConfig(sqlite);
-  assertPrivacy(currentConfig, config.transcriptionEngine);
+  // A transcript made on the phone (ProvidedTranscript) sends nothing from here.
+  const provided = data.provided as ProvidedTranscript | undefined;
+  if (!provided) assertPrivacy(currentConfig, config.transcriptionEngine);
   console.log(`[Job] Processing recording ${recordingId}`);
 
   await db.update(recordings).set({ status: 'transcribing' }).where(eq(recordings.id, recordingId));
@@ -106,7 +118,7 @@ jobQueue.register('process-recording', async (data: any, job) => {
   );
   const startedAt = new Date().toISOString();
   // Cost gate, spend ledger and long-audio chunking (AI-08, AI-10) live in the runner.
-  const result = await runTranscription(sqlite, router, { jobId: job.id, recordingId, filePath, config, options, costConfirmed: data.costConfirmed === true, signal: job.signal, checkpoint: job.checkpoint, saveCheckpoint: job.saveCheckpoint });
+  const result = provided ? providedResult(provided) : await runTranscription(sqlite, router, { jobId: job.id, recordingId, filePath, config, options, costConfirmed: data.costConfirmed === true, signal: job.signal, checkpoint: job.checkpoint, saveCheckpoint: job.saveCheckpoint });
   job.signal.throwIfAborted();
 
   if (result.success) {

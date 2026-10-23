@@ -3,7 +3,8 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { sqlite } from '../db/client';
 import { importRecordingFile, RecordingImportConflict, safeFilename } from '../library/recording-library';
-import { queueRecordingProcessing } from '../library/processing';
+import { offerTranscript, queueRecordingProcessing, type ProvidedTranscript } from '../library/processing';
+import { jobQueue } from '../jobs/queue';
 import { PlaudDeviceAuth, readDeviceCredentials } from '../sync/plaud-device-auth';
 import { ClientNotFound, type ClientPermission } from '../sync/mobile-clients';
 import { MobileUploads, UploadError, MAX_CHUNK_BYTES } from '../sync/mobile-uploads';
@@ -219,6 +220,35 @@ app.post('/recordings', async c => {
   } finally {
     await Bun.file(incomingPath).delete().catch(() => undefined);
   }
+});
+
+/**
+ * The phone transcribed a recording with its own API key. Sent before the audio; when the audio
+ * arrives (or is already here without a transcript), the vault stores this text instead of
+ * transcribing again.
+ */
+app.post('/transcripts', async c => {
+  const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+  const fingerprint = typeof body?.fingerprint === 'string' ? body.fingerprint : '';
+  const fullText = typeof body?.fullText === 'string' ? body.fullText : '';
+  if (!/^[a-f0-9]{64}$/.test(fingerprint)) return c.json({ success: false, error: 'A SHA-256 fingerprint is required.' }, 400);
+  if (!fullText.trim() || fullText.length > 2_000_000) return c.json({ success: false, error: 'Transcript text is required.' }, 400);
+  const segments = (Array.isArray(body?.segments) ? body.segments : []).flatMap(item => {
+    const segment = item as Record<string, unknown>;
+    return typeof segment?.text === 'string' && Number.isFinite(segment.start) && Number.isFinite(segment.end)
+      ? [{ start: Number(segment.start), end: Number(segment.end), text: segment.text }] : [];
+  }).slice(0, 20_000);
+  const text = (value: unknown) => typeof value === 'string' && value ? value.slice(0, 80) : null;
+  const duration = Number(body?.durationSeconds);
+  const transcript: ProvidedTranscript = { fullText, segments, provider: text(body?.provider) ?? 'openai', model: text(body?.model),
+    language: text(body?.language), durationSeconds: Number.isFinite(duration) && duration > 0 ? duration : null };
+  offerTranscript(fingerprint, transcript);
+  // Audio that reached the vault earlier (Bluetooth sync, a failed transcription) gets it now.
+  const waiting = sqlite.query(`SELECT r.id, r.file_path AS filePath FROM recordings r LEFT JOIN transcripts t ON t.recording_id = r.id
+    WHERE r.fingerprint = ? AND r.retention_state = 'active' AND t.id IS NULL`).get(fingerprint) as { id: string; filePath: string } | null;
+  const attached = Boolean(waiting && !jobQueue.activeJob('process-recording', waiting.id));
+  if (waiting && attached) await queueRecordingProcessing({ recordingId: waiting.id, filePath: waiting.filePath });
+  return c.json({ success: true, data: { attached } });
 });
 
 // ---------------------------------------------------------------------------

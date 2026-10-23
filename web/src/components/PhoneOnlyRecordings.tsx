@@ -4,6 +4,8 @@ import { Loader2, Smartphone, UploadCloud } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import { hasPhoneLibrary, phoneLibrary, sendToComputer, type PhoneRecording } from '@/lib/phone-library'
 import { formatDate, t } from '@/i18n'
+import { TranscriptActions } from '@/components/PhoneTranscription'
+import { usePhoneTranscription } from '@/lib/use-phone-transcription'
 
 /**
  * On the phone, the Recordings list is the computer's vault. Recordings saved only on this phone
@@ -13,6 +15,7 @@ export function PhoneOnlyRecordings({ onSent }: { onSent?: () => void }) {
   const [items, setItems] = useState<PhoneRecording[]>([])
   const [sending, setSending] = useState<{ id: string; percent: number | null } | null>(null)
   const [message, setMessage] = useState('')
+  const transcription = usePhoneTranscription()
   const load = useCallback(() => phoneLibrary.list().then(value => setItems(value.recordings.filter(item => !item.onDesktop))).catch(() => undefined), [])
   useEffect(() => { if (hasPhoneLibrary()) void load() }, [load])
   if (!hasPhoneLibrary() || items.length === 0) return null
@@ -34,6 +37,7 @@ export function PhoneOnlyRecordings({ onSent }: { onSent?: () => void }) {
     {items.map(item => <article key={item.id}>
       <span><strong>{item.name}</strong><small>{item.addedAt ? formatDate(item.addedAt) : ''} · {t('{value} KB', { value: (item.size / 1024).toFixed(0) })}
         {item.send ? ` · ${t('Waiting for the computer')}` : ''}</small></span>
+      <TranscriptActions item={item} transcription={transcription} />
       <Button size="sm" variant="outline" disabled={sending !== null} onClick={() => void send(item)}>
         {sending?.id === item.id ? <><Loader2 className="animate-spin" />{sending.percent === null ? t('Sending...') : `${sending.percent}%`}</> : <><UploadCloud />{t('Send to computer')}</>}
       </Button>

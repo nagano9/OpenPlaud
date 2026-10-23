@@ -130,11 +130,12 @@ class PlaudPlugin(private val activity: Activity) : Plugin(activity) {
         val onDesktop = PhoneRecordings.onDesktop(activity)
         val offered = PhoneRecordings.offered(activity)
         val published = PhoneRecordings.published(activity)
+        val transcribed = PhoneTranscriber.transcribed(activity)
         val items = org.json.JSONArray()
         PhoneRecordings.outboxItems(activity).forEach { item ->
             items.put(org.json.JSONObject().put("id", item.id.toString()).put("name", item.name).put("size", item.size)
                 .put("addedAt", item.recordedAt ?: org.json.JSONObject.NULL).put("onDesktop", item.id in onDesktop).put("send", item.id in offered)
-                .put("inFolder", item.id in published))
+                .put("inFolder", item.id in published).put("transcribed", item.id in transcribed))
         }
         val value = JSObject().put("recordings", items).put("folder", PhoneRecordings.PUBLIC_FOLDER)
         value.put("autoSend", PhoneRecordings.autoSend(activity))
@@ -223,6 +224,33 @@ class PlaudPlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
     @Command fun recordDiscard(invoke: Invoke) { RecordingService.discard(activity, invoke.getArgs().getString("take")); invoke.resolve(recorderValue()) }
+
+    // Phone transcription (PhoneTranscriber): the person's own OpenAI key, kept encrypted on the phone.
+    private fun transcriptionValue() = JSObject(PhoneTranscriber.settings(activity).put("jobs", PhoneTranscriber.jobsValue()).toString())
+    @Command fun transcriptionStatus(invoke: Invoke) = invoke.resolve(transcriptionValue())
+    @Command fun transcriptionSetKey(invoke: Invoke) {
+        val key = invoke.getArgs().getString("key").orEmpty()
+        worker.execute {
+            try { PhoneTranscriber.saveKey(activity, key); val value = transcriptionValue(); main.post { invoke.resolve(value) } }
+            catch (e: Exception) { main.post { invoke.reject(e.message ?: "The key could not be saved.") } }
+        }
+    }
+    @Command fun transcriptionClearKey(invoke: Invoke) { PhoneTranscriber.clearKey(activity); invoke.resolve(transcriptionValue()) }
+    @Command fun transcriptionSetLanguage(invoke: Invoke) = try {
+        PhoneTranscriber.setLanguage(activity, invoke.getArgs().getString("language").orEmpty()); invoke.resolve(transcriptionValue())
+    } catch (e: Exception) { invoke.reject(e.message ?: "The language could not be saved.") }
+    @Command fun transcribe(invoke: Invoke) {
+        val id = invoke.getArgs().getString("id").toLong()
+        if (!PhoneTranscriber.settings(activity).getBoolean("hasKey")) { invoke.reject("Add your OpenAI API key first."); return }
+        if (!PhoneRecordings.exists(activity, id)) { invoke.reject("This recording is no longer on the phone."); return }
+        TranscriptionService.start(activity, id)
+        PhoneTranscriber.jobs[id] = org.json.JSONObject().put("state", "queued")
+        invoke.resolve(transcriptionValue())
+    }
+    @Command fun transcriptGet(invoke: Invoke) = worker.execute {
+        try { val value = JSObject(PhoneTranscriber.transcript(activity, invoke.getArgs().getString("id").toLong()).toString()); main.post { invoke.resolve(value) } }
+        catch (e: Exception) { main.post { invoke.reject(e.message ?: "The transcript could not be read.") } }
+    }
 
     /** Opens Android's file picker for audio; picked files are copied into the phone library. */
     @Command fun phonePickRecordings(invoke: Invoke) {

@@ -18,6 +18,8 @@
     <!-- The native recorder keeps the microphone while the screen is off. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Phone transcription keeps running with the screen off. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -36,6 +38,7 @@
         <service android:name=".PlaudImportService" android:exported="false" android:foregroundServiceType="connectedDevice" />
         <service android:name=".PhoneBleSyncService" android:exported="false" android:foregroundServiceType="connectedDevice" />
         <service android:name=".RecordingService" android:exported="false" android:foregroundServiceType="microphone" />
+        <service android:name=".TranscriptionService" android:exported="false" android:foregroundServiceType="dataSync" />
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:launchMode="singleTask"

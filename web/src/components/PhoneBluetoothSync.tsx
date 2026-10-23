@@ -5,6 +5,8 @@ import { deviceCommand } from '@/lib/plaud-device'
 import { phoneLibrary, sendToComputer, type PhoneLibrary, type PhoneRecording } from '@/lib/phone-library'
 import { authenticatedHeaders, apiUrl, getRuntime } from '@/lib/runtime'
 import { formatDate, t } from '@/i18n'
+import { PhoneTranscriptionSettings, TranscriptActions } from '@/components/PhoneTranscription'
+import { usePhoneTranscription } from '@/lib/use-phone-transcription'
 
 interface PhoneBleState { enabled: boolean; active: boolean; status: string; clientId: string | null }
 
@@ -28,6 +30,7 @@ export function PhoneBluetoothSync() {
   const [autoSend, setAutoSend] = useState(false)
   const [folder, setFolder] = useState('')
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('')
+  const transcription = usePhoneTranscription()
 
   const apply = useCallback((value: PhoneLibrary) => { setLibrary(value.recordings); setAutoSend(value.autoSend); setFolder(value.folder ?? '') }, [])
   const loadLibrary = useCallback(() => phoneLibrary.list().then(apply).catch(() => undefined), [apply])
@@ -68,7 +71,8 @@ export function PhoneBluetoothSync() {
   const status = (item: PhoneRecording) => item.onDesktop ? t('On the computer')
     : !item.send ? t('Only on this phone')
       : state?.enabled ? t('Waiting for the computer') : t('Turn on Bluetooth sync to send')
-  return <section className="device-section" aria-label={t('Recordings on this phone')}>
+  return <><PhoneTranscriptionSettings transcription={transcription} />
+  <section className="device-section" aria-label={t('Recordings on this phone')}>
     <div className="device-section-heading"><h2>{t('Recordings on this phone')}</h2>
       <Button size="sm" disabled={busy} onClick={() => void pick()}>{busy ? <Loader2 className="animate-spin" /> : <Upload />}{t('Add from files')}</Button>
     </div>
@@ -83,6 +87,7 @@ export function PhoneBluetoothSync() {
     {library && library.length === 0 && <p className="device-muted">{t('No recordings yet.')}</p>}
     {library?.map(item => <article className="device-recording-row" key={item.id}>
       <span><strong>{item.name}</strong><small>{item.addedAt ? formatDate(item.addedAt) : ''} · {t('{value} KB', { value: (item.size / 1024).toFixed(0) })} · {status(item)}{item.inFolder ? ` · ${t('In {folder}', { folder })}` : ''}</small></span>
+      <TranscriptActions item={item} transcription={transcription} />
       {item.onDesktop ? <Check aria-label={t('On the computer')} />
         : item.send ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => void change(() => phoneLibrary.setSend(item.id, false))}><X />{t('Don’t send')}</Button>
           : <Button size="sm" variant="outline" disabled={busy} onClick={() => void change(async () => { const result = await sendToComputer(item); setNotice(result.via === 'wifi' ? t('{name} is now on the computer.', { name: item.name }) : `${t('The computer is not reachable over Wi-Fi. {name} will be sent over Bluetooth.', { name: item.name })}${result.reason ? ` (${result.reason})` : ''}`); return result.library })}><UploadCloud />{t('Send to computer')}</Button>}
@@ -97,5 +102,5 @@ export function PhoneBluetoothSync() {
     </label>
     {state?.enabled && <p className="device-muted">{t('No Bluetooth pairing dialog is needed: your computer proves it is the desktop this phone is paired with, and recordings travel encrypted.')}</p>}
     {error && <p className="device-error" role="alert">{error}</p>}
-  </section>
+  </section></>
 }

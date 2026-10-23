@@ -91,7 +91,8 @@ class RecordingService : Service() {
                 media.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
                 media.setAudioChannels(1)
                 media.setAudioSamplingRate(44100)
-                media.setAudioEncodingBitRate(96000)
+                // 48 kbps mono keeps speech clear and about 70 minutes under OpenAI's 25 MB upload limit.
+                media.setAudioEncodingBitRate(48000)
                 media.setOutputFile(file.absolutePath)
                 media.prepare()
                 media.start()
