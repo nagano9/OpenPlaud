@@ -128,12 +128,14 @@ class PlaudPlugin(private val activity: Activity) : Plugin(activity) {
     private fun libraryValue(): JSObject {
         val onDesktop = PhoneRecordings.onDesktop(activity)
         val offered = PhoneRecordings.offered(activity)
+        val published = PhoneRecordings.published(activity)
         val items = org.json.JSONArray()
         PhoneRecordings.outboxItems(activity).forEach { item ->
             items.put(org.json.JSONObject().put("id", item.id.toString()).put("name", item.name).put("size", item.size)
-                .put("addedAt", item.recordedAt ?: org.json.JSONObject.NULL).put("onDesktop", item.id in onDesktop).put("send", item.id in offered))
+                .put("addedAt", item.recordedAt ?: org.json.JSONObject.NULL).put("onDesktop", item.id in onDesktop).put("send", item.id in offered)
+                .put("inFolder", item.id in published))
         }
-        val value = JSObject().put("recordings", items)
+        val value = JSObject().put("recordings", items).put("folder", PhoneRecordings.PUBLIC_FOLDER)
         value.put("autoSend", PhoneRecordings.autoSend(activity))
         return value
     }
@@ -142,7 +144,7 @@ class PlaudPlugin(private val activity: Activity) : Plugin(activity) {
         try { work(); val value = libraryValue(); main.post { invoke.resolve(value) } }
         catch (e: Exception) { main.post { invoke.reject(e.message ?: failure) } }
     }
-    @Command fun phoneLibrary(invoke: Invoke) = libraryCommand(invoke, "The phone library could not be read.") {}
+    @Command fun phoneLibrary(invoke: Invoke) = libraryCommand(invoke, "The phone library could not be read.") { PhoneRecordings.publishEarlier(activity) }
     /** Marks one recording to be copied by the desktop, or takes it back; the phone keeps it either way. */
     @Command fun phoneSetSend(invoke: Invoke) = libraryCommand(invoke, "The recording could not be updated.") {
         val id = invoke.getArgs().getString("id").toLong()

@@ -41,8 +41,9 @@ class PhoneRecordings(private val context: Context) {
         val projection = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.SIZE, MediaStore.Audio.Media.DISPLAY_NAME,
             MediaStore.Audio.Media.DATE_ADDED, MediaStore.Audio.Media.MIME_TYPE)
         val (selection, arguments) = when {
-            Build.VERSION.SDK_INT >= 31 -> "${MediaStore.Audio.Media.IS_RECORDING} = 1" to emptyArray()
-            Build.VERSION.SDK_INT >= 29 -> "(${MediaStore.Audio.Media.RELATIVE_PATH} LIKE ? OR ${MediaStore.Audio.Media.RELATIVE_PATH} LIKE ?) AND ${MediaStore.Audio.Media.IS_MUSIC} = 0" to arrayOf("%Record%", "%Sound%")
+            // OpenPlod's own shared copies are already in the library; listing them again would send them twice.
+            Build.VERSION.SDK_INT >= 31 -> "${MediaStore.Audio.Media.IS_RECORDING} = 1 AND ${MediaStore.Audio.Media.RELATIVE_PATH} NOT LIKE ?" to arrayOf("%OpenPlod%")
+            Build.VERSION.SDK_INT >= 29 -> "(${MediaStore.Audio.Media.RELATIVE_PATH} LIKE ? OR ${MediaStore.Audio.Media.RELATIVE_PATH} LIKE ?) AND ${MediaStore.Audio.Media.IS_MUSIC} = 0 AND ${MediaStore.Audio.Media.RELATIVE_PATH} NOT LIKE ?" to arrayOf("%Record%", "%Sound%", "%OpenPlod%")
             else -> "(${MediaStore.Audio.Media.DATA} LIKE ? OR ${MediaStore.Audio.Media.DATA} LIKE ?) AND ${MediaStore.Audio.Media.IS_MUSIC} = 0" to arrayOf("%/Record%", "%/Sound%")
         }
         val items = ArrayList<Item>()
@@ -165,8 +166,64 @@ class PhoneRecordings(private val context: Context) {
             require(upload.matches(Regex("[0-9a-f-]{36}"))) { "Invalid recording upload." }
             val file = partial(context, upload)
             check(file.exists() && file.length() > 0) { "The recording is empty." }
-            try { return keep(context, file, name, send) } finally { file.delete() }
+            try {
+                val id = keep(context, file, name, send)
+                outboxFile(context, id)?.let { publish(context, id, it) }
+                return id
+            } finally { file.delete() }
         }
+
+        /** Where copies of OpenPlod's own recordings appear for file managers and players. */
+        val PUBLIC_FOLDER = if (Build.VERSION.SDK_INT >= 31) "${android.os.Environment.DIRECTORY_RECORDINGS}/OpenPlod" else "${android.os.Environment.DIRECTORY_MUSIC}/OpenPlod"
+
+        /**
+         * App storage is erased when OpenPlod is uninstalled, so recordings made in the app also get a
+         * copy in the shared Recordings/OpenPlod folder (Music/OpenPlod before Android 12), which stays.
+         * Needs no permission from Android 10; older versions keep only the app copy.
+         */
+        private fun publish(context: Context, id: Long, file: java.io.File) {
+            if (Build.VERSION.SDK_INT < 29) return
+            // Android's media store refuses audio/webm; WebM is Matroska, so the copy is an .mka file.
+            val name = file.name.substringAfter('-').replace(Regex("\\.webm$", RegexOption.IGNORE_CASE), ".mka")
+            val extension = name.substringAfterLast('.', "").lowercase()
+            val resolver = context.contentResolver
+            val values = android.content.ContentValues().apply {
+                put(MediaStore.Audio.Media.DISPLAY_NAME, name)
+                put(MediaStore.Audio.Media.MIME_TYPE, if (extension == "mka") "audio/x-matroska" else extensions[extension] ?: "audio/mp4")
+                put(MediaStore.Audio.Media.RELATIVE_PATH, PUBLIC_FOLDER)
+                put(MediaStore.Audio.Media.IS_PENDING, 1)
+            }
+            val uri = try { resolver.insert(MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values) }
+                catch (error: Exception) { android.util.Log.w("OpenPlodShare", "recording $id could not be added to $PUBLIC_FOLDER: ${error.message}"); null }
+                ?: return android.util.Log.w("OpenPlodShare", "recording $id was not added to $PUBLIC_FOLDER").let { }
+            try {
+                (resolver.openOutputStream(uri) ?: throw IOException("No output")).use { output -> file.inputStream().use { it.copyTo(output) } }
+                resolver.update(uri, android.content.ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) }, null, null)
+                val published = imported(context).getStringSet("published", emptySet()).orEmpty()
+                imported(context).edit().putStringSet("published", published + id.toString()).commit()
+                android.util.Log.i("OpenPlodShare", "recording $id copied to $PUBLIC_FOLDER")
+            } catch (error: Exception) {
+                resolver.delete(uri, null, null)
+                android.util.Log.w("OpenPlodShare", "recording $id could not be copied to $PUBLIC_FOLDER: ${error.message}")
+            }
+        }
+
+        /**
+         * Recordings made in the app before the shared copy existed (WebM is what the in-app recorder
+         * writes; shared and picked files already live elsewhere on the phone) get their copy once.
+         */
+        fun publishEarlier(context: Context) {
+            val prefs = imported(context)
+            if (Build.VERSION.SDK_INT < 29 || prefs.getBoolean("publishBackfilled", false)) return
+            val published = prefs.getStringSet("published", emptySet()).orEmpty()
+            (outbox(context).listFiles() ?: emptyArray()).filter { it.name.endsWith(".webm", ignoreCase = true) }.forEach { file ->
+                val id = file.name.substringBefore('-').toLongOrNull() ?: return@forEach
+                if (id.toString() !in published) publish(context, id, file)
+            }
+            prefs.edit().putBoolean("publishBackfilled", true).apply()
+        }
+
+        fun published(context: Context): Set<Long> = imported(context).getStringSet("published", emptySet()).orEmpty().mapNotNull { it.toLongOrNull() }.toSet()
 
         /**
          * Recordings marked "send to computer". Before this setting existed every library recording
