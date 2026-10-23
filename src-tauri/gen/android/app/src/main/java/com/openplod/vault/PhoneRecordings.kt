@@ -166,11 +166,14 @@ class PhoneRecordings(private val context: Context) {
             require(upload.matches(Regex("[0-9a-f-]{36}"))) { "Invalid recording upload." }
             val file = partial(context, upload)
             check(file.exists() && file.length() > 0) { "The recording is empty." }
-            try {
-                val id = keep(context, file, name, send)
-                outboxFile(context, id)?.let { publish(context, id, it) }
-                return id
-            } finally { file.delete() }
+            try { return keepRecording(context, file, name, send) } finally { file.delete() }
+        }
+
+        /** Adds a recording made in OpenPlod to the library and the shared folder; returns its id. */
+        fun keepRecording(context: Context, file: java.io.File, name: String, send: Boolean): Long {
+            val id = keep(context, file, name, send)
+            outboxFile(context, id)?.let { publish(context, id, it) }
+            return id
         }
 
         /** Where copies of OpenPlod's own recordings appear for file managers and players. */
@@ -249,6 +252,17 @@ class PhoneRecordings(private val context: Context) {
         fun setAutoSend(context: Context, enabled: Boolean) { imported(context).edit().putBoolean("autoSend", enabled).apply() }
 
         fun exists(context: Context, id: Long) = outboxFile(context, id) != null
+
+        /** Reads part of a library file for this phone's own UI (no "send" check: nothing leaves without the person). */
+        fun readLibrary(context: Context, id: Long, offset: Long, length: Int): ByteArray {
+            require(offset >= 0 && length in 1..(1 shl 20)) { "Invalid range" }
+            val file = outboxFile(context, id) ?: throw IOException("This recording is no longer on the phone.")
+            java.io.RandomAccessFile(file, "r").use { input ->
+                if (offset >= input.length()) return ByteArray(0)
+                input.seek(offset)
+                return ByteArray(minOf(length.toLong(), input.length() - offset).toInt()).also { input.readFully(it) }
+            }
+        }
 
         private fun outboxFile(context: Context, id: Long) = outbox(context).listFiles()?.firstOrNull { it.name.startsWith("$id-") }
 

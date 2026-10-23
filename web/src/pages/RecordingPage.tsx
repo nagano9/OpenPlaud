@@ -12,7 +12,7 @@ import { formatDuration } from '@/lib/utils'
 import { completePendingAndroidShare, readPendingAndroidShare } from '@/lib/android-share'
 import { formatDate, t } from '@/i18n'
 import { useAudioInputs } from '@/lib/audio-inputs'
-import { hasPhoneLibrary, phoneLibrary, saveToPhone } from '@/lib/phone-library'
+import { hasPhoneLibrary, nativeRecorder, phoneLibrary, saveToPhone, type NativeRecorderStatus } from '@/lib/phone-library'
 
 type CaptureState = 'idle' | 'requesting' | 'recording' | 'paused' | 'review' | 'uploading' | 'stored'
 
@@ -44,6 +44,10 @@ export function RecordingPage() {
   const activeStartedAtRef = useRef(0)
   const accumulatedMsRef = useRef(0)
   const recordedAtRef = useRef('')
+  // Android records natively (a foreground service), so the screen can turn off during a meeting.
+  const native = hasPhoneLibrary()
+  const takeRef = useRef<string | null>(null)
+  const levelsRef = useRef<number[]>([])
 
   const releaseMicrophone = useCallback(() => {
     streamRef.current?.getTracks().forEach(track => track.stop())
@@ -57,6 +61,17 @@ export function RecordingPage() {
 
   useEffect(() => {
     const restoreCapture = async () => {
+      if (native) {
+        // A take still recording, or finished while the app was away (notification Stop), comes back here.
+        const status = await nativeRecorder.status()
+        if (status.state === 'recording' || status.state === 'paused') {
+          recordedAtRef.current = new Date(status.startedAt ?? Date.now()).toISOString()
+          setElapsedMs(status.elapsedMs ?? 0)
+          setState(status.state)
+          return
+        }
+        if (status.state === 'stopped') { await loadTake(status); return }
+      }
       const shared = await readPendingAndroidShare()
       const pending = shared ?? await latestPendingCapture()
       if (!pending) return
@@ -77,7 +92,25 @@ export function RecordingPage() {
   }, [])
 
   useEffect(() => {
-    if (state !== 'recording') return
+    if (!native || (state !== 'recording' && state !== 'paused')) return
+    const poll = async () => {
+      const status = await nativeRecorder.status().catch(() => null)
+      if (!status) return
+      if (status.state === 'stopped') { await loadTake(status); return }
+      if (status.state === 'idle') { setState('idle'); setError(status.error ?? t('The microphone could not be started.')); return }
+      setElapsedMs(status.elapsedMs ?? 0)
+      if (status.state !== state) setState(status.state === 'paused' ? 'paused' : 'recording')
+      levelsRef.current = [...levelsRef.current, status.level ?? 0].slice(-WAVE_BAR_COUNT)
+      drawLevels()
+    }
+    void poll()
+    const timer = window.setInterval(() => void poll(), 250)
+    return () => window.clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [native, state])
+
+  useEffect(() => {
+    if (native || state !== 'recording') return
     const update = () => setElapsedMs(accumulatedMsRef.current + performance.now() - activeStartedAtRef.current)
     update()
     const timer = window.setInterval(update, 200)
@@ -131,7 +164,58 @@ export function RecordingPage() {
     animationRef.current = requestAnimationFrame(draw)
   }, [])
 
+  /** Bars from the native recorder's level readings, newest on the right. */
+  const drawLevels = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ratio = window.devicePixelRatio || 1
+    const width = Math.max(1, canvas.clientWidth)
+    const height = Math.max(1, canvas.clientHeight)
+    if (canvas.width !== width * ratio || canvas.height !== height * ratio) { canvas.width = width * ratio; canvas.height = height * ratio }
+    const context2d = canvas.getContext('2d')
+    if (!context2d) return
+    context2d.setTransform(ratio, 0, 0, ratio, 0, 0)
+    context2d.clearRect(0, 0, width, height)
+    const gap = 4
+    const barWidth = Math.max(2, (width - gap * (WAVE_BAR_COUNT - 1)) / WAVE_BAR_COUNT)
+    const levels = levelsRef.current
+    context2d.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()
+    for (let index = 0; index < WAVE_BAR_COUNT; index += 1) {
+      const level = levels[levels.length - WAVE_BAR_COUNT + index] ?? 0
+      const barHeight = Math.max(4, Math.min(1, Math.sqrt(level) * 1.4) * height * 0.9)
+      context2d.beginPath()
+      context2d.roundRect(index * (barWidth + gap), (height - barHeight) / 2, barWidth, barHeight, barWidth / 2)
+      context2d.fill()
+    }
+  }
+
+  /** Opens a finished native take for review; the file stays on the phone until Save or Discard. */
+  const loadTake = async (status: NativeRecorderStatus) => {
+    if (!status.take || takeRef.current === status.take) return
+    takeRef.current = status.take
+    const blob = await nativeRecorder.read(status.take, status.size ?? 0)
+    const recordedAt = new Date(status.startedAt || Date.now()).toISOString()
+    setCapture({ id: crypto.randomUUID(), blob, filename: `${slugify(title)}.m4a`, title, context, recordedAt, durationMs: status.elapsedMs ?? 0 })
+    setElapsedMs(status.elapsedMs ?? 0)
+    setAudioUrl(previous => { if (previous) URL.revokeObjectURL(previous); return URL.createObjectURL(blob) })
+    setState('review')
+  }
+
   const startRecording = async () => {
+    if (native) {
+      setState('requesting'); setError('')
+      try {
+        const status = await nativeRecorder.start()
+        recordedAtRef.current = new Date(status.startedAt ?? Date.now()).toISOString()
+        levelsRef.current = []
+        setElapsedMs(0)
+        setState('recording')
+      } catch (startError) {
+        setState('idle')
+        setError(startError instanceof Error ? startError.message : String(startError))
+      }
+      return
+    }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
       setError(t('Microphone recording is not supported on this device.'))
       return
@@ -183,6 +267,13 @@ export function RecordingPage() {
   }
 
   const pauseRecording = () => {
+    if (native) {
+      void (state === 'recording' ? nativeRecorder.pause() : nativeRecorder.resume()).then(status => {
+        setElapsedMs(status.elapsedMs ?? 0)
+        setState(status.state === 'paused' ? 'paused' : 'recording')
+      }).catch(failure => setError(failure instanceof Error ? failure.message : String(failure)))
+      return
+    }
     const recorder = recorderRef.current
     if (!recorder) return
     if (state === 'recording') {
@@ -198,6 +289,11 @@ export function RecordingPage() {
   }
 
   const stopRecording = () => {
+    if (native) {
+      void nativeRecorder.stop().then(status => status.state === 'stopped' ? loadTake(status) : (setState('idle'), setError(status.error ?? t('The microphone could not be started.'))))
+        .catch(failure => setError(failure instanceof Error ? failure.message : String(failure)))
+      return
+    }
     const recorder = recorderRef.current
     if (!recorder || recorder.state === 'inactive') return
     if (state === 'recording') accumulatedMsRef.current += monotonicNow() - activeStartedAtRef.current
@@ -267,7 +363,8 @@ export function RecordingPage() {
     setState('uploading'); setError(''); setProgress(null)
     const filename = `${slugify(title)}.${extensionForMimeType(capture.blob.type)}`
     try {
-      await saveToPhone(capture.blob, filename, send, (done, total) => setProgress(total ? done / total : null))
+      if (takeRef.current) { await nativeRecorder.keep(takeRef.current, filename, send); takeRef.current = null }
+      else await saveToPhone(capture.blob, filename, send, (done, total) => setProgress(total ? done / total : null))
       let delivered = false
       if (send && runtime.paired) {
         const pending = (await updateCapture(capture.id, { title, context, filename }).catch(() => null)) ?? { ...capture, title, context, filename }
@@ -289,6 +386,7 @@ export function RecordingPage() {
   const discard = async () => {
     if (capture && !window.confirm(t('Discard this local recording?'))) return
     if (capture) await removePendingCapture(capture.id).catch(() => undefined)
+    if (takeRef.current) { await nativeRecorder.discard(takeRef.current).catch(() => undefined); takeRef.current = null }
     if (audioUrl) URL.revokeObjectURL(audioUrl)
     setCapture(null)
     setAudioUrl('')
@@ -325,7 +423,7 @@ export function RecordingPage() {
             <button className="record-trigger" type="button" onClick={() => void startRecording()} disabled={state === 'requesting'} aria-label={t('Start recording')}>
               {state === 'requesting' ? <Loader2 className="animate-spin" /> : <Mic />}
             </button>
-            {inputs.length > 1 && <label className="capture-input">{t('Microphone')}
+            {!native && inputs.length > 1 && <label className="capture-input">{t('Microphone')}
               <select value={inputId} disabled={state === 'requesting'} onChange={event => chooseInput(event.target.value)}>
                 <option value="">{t('System default')}</option>
                 {inputs.map((input, index) => <option key={input.deviceId} value={input.deviceId}>{input.label || t('Microphone {number}', { number: index + 1 })}</option>)}

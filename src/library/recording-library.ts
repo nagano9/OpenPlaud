@@ -74,7 +74,9 @@ export const convertedName = (name: string) => `${name.replace(/\.[^.]+$/, '')}.
 export async function convertForImport(sourcePath: string, directory: string): Promise<string> {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const output = join(directory, `${crypto.randomUUID()}.m4a`);
-  const child = Bun.spawn(['ffmpeg', '-v', 'error', '-xerror', '-n', '-i', sourcePath, '-map', '0:a:0', '-c:a', 'aac', '-b:a', '128k', output], { stdout: 'ignore', stderr: 'pipe' });
+  // Browser and phone recorders write WebM/Matroska whose timestamps jump or step back; numbering
+  // the samples afresh keeps every second of audio without inventing silence for the jumps.
+  const child = Bun.spawn(['ffmpeg', '-v', 'error', '-xerror', '-n', '-i', sourcePath, '-map', '0:a:0', '-af', 'asetpts=N/SR/TB', '-c:a', 'aac', '-b:a', '128k', output], { stdout: 'ignore', stderr: 'pipe' });
   const timer = setTimeout(() => child.kill(), 10 * 60000);
   try {
     const stderr = await new Response(child.stderr).text();

@@ -21,7 +21,8 @@ import java.util.concurrent.Executors
     Permission(alias = "notifications", strings = [Manifest.permission.POST_NOTIFICATIONS]),
     Permission(alias = "bluetoothServer", strings = [Manifest.permission.BLUETOOTH_ADVERTISE, Manifest.permission.BLUETOOTH_CONNECT]),
     Permission(alias = "audioRecordings", strings = [Manifest.permission.READ_MEDIA_AUDIO]),
-    Permission(alias = "storage", strings = [Manifest.permission.READ_EXTERNAL_STORAGE])
+    Permission(alias = "storage", strings = [Manifest.permission.READ_EXTERNAL_STORAGE]),
+    Permission(alias = "microphone", strings = [Manifest.permission.RECORD_AUDIO])
 ])
 class PlaudPlugin(private val activity: Activity) : Plugin(activity) {
     private val controller by lazy { DirectPlaudController.get(activity) }
@@ -151,6 +152,18 @@ class PlaudPlugin(private val activity: Activity) : Plugin(activity) {
         check(PhoneRecordings.exists(activity, id)) { "This recording is no longer on the phone." }
         PhoneRecordings.setOffered(activity, id, invoke.getArgs().getBoolean("send"))
     }
+    /** Reads part of a library recording so the web view can upload it to the paired computer over Wi-Fi. */
+    @Command fun phoneRecordingRead(invoke: Invoke) = worker.execute {
+        try {
+            val args = invoke.getArgs()
+            val bytes = PhoneRecordings.readLibrary(activity, args.getString("id").toLong(), args.getLong("offset"), args.getInt("length"))
+            main.post { invoke.resolve(JSObject().put("data", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))) }
+        } catch (e: Exception) { main.post { invoke.reject(e.message ?: "The recording could not be read.") } }
+    }
+    /** The computer confirmed it holds this recording (uploaded over Wi-Fi). */
+    @Command fun phoneMarkOnDesktop(invoke: Invoke) = libraryCommand(invoke, "The recording could not be updated.") {
+        PhoneRecordings.markOnDesktop(activity, listOf(invoke.getArgs().getString("id").toLong()))
+    }
     @Command fun phoneSetAutoSend(invoke: Invoke) = libraryCommand(invoke, "The setting could not be saved.") {
         PhoneRecordings.setAutoSend(activity, invoke.getArgs().getBoolean("enabled"))
     }
@@ -174,6 +187,43 @@ class PlaudPlugin(private val activity: Activity) : Plugin(activity) {
             android.util.Log.i("OpenPlodShare", "saved in-app recording $saved on the phone")
         }
     }
+    // Native recorder (RecordingService): keeps recording with the screen off or the phone locked.
+    private fun recorderValue() = JSObject(RecordingService.status(activity).toString())
+    @Command fun recordStatus(invoke: Invoke) = invoke.resolve(recorderValue())
+    @Command fun recordStart(invoke: Invoke) =
+        requestPermissionForAliases(if (Build.VERSION.SDK_INT >= 33) arrayOf("microphone", "notifications") else arrayOf("microphone"), invoke, "recordPermissions")
+    @PermissionCallback fun recordPermissions(invoke: Invoke) {
+        if (getPermissionState("microphone") != PermissionState.GRANTED) { invoke.reject("Microphone access is off. Allow OpenPlod in your system settings, then try again."); return }
+        try { RecordingService.start(activity) } catch (e: Exception) { invoke.reject(e.message ?: "The microphone could not be started."); return }
+        // The service starts the microphone once it is in the foreground; answer when it has.
+        var waited = 0
+        main.post(object : Runnable {
+            override fun run() {
+                val value = recorderValue()
+                if (value.getString("state") == "starting" && waited++ < 50) { main.postDelayed(this, 100); return }
+                if (value.getString("state") == "recording") invoke.resolve(value)
+                else invoke.reject(value.optString("error").takeIf { it.isNotBlank() && it != "null" } ?: "The microphone could not be started.")
+            }
+        })
+    }
+    @Command fun recordPause(invoke: Invoke) { RecordingService.pause(activity); invoke.resolve(recorderValue()) }
+    @Command fun recordResume(invoke: Invoke) { RecordingService.resume(activity); invoke.resolve(recorderValue()) }
+    @Command fun recordStop(invoke: Invoke) { RecordingService.stop(activity); invoke.resolve(recorderValue()) }
+    @Command fun recordRead(invoke: Invoke) = worker.execute {
+        try {
+            val args = invoke.getArgs()
+            val bytes = RecordingService.read(activity, args.getString("take"), args.getLong("offset"), args.getInt("length"))
+            main.post { invoke.resolve(JSObject().put("data", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))) }
+        } catch (e: Exception) { main.post { invoke.reject(e.message ?: "The recording could not be read.") } }
+    }
+    @Command fun recordKeep(invoke: Invoke) {
+        val args = invoke.getArgs()
+        libraryCommand(invoke, "The recording could not be saved on this phone.") {
+            RecordingService.keep(activity, args.getString("take"), args.getString("name"), args.getBoolean("send"))
+        }
+    }
+    @Command fun recordDiscard(invoke: Invoke) { RecordingService.discard(activity, invoke.getArgs().getString("take")); invoke.resolve(recorderValue()) }
+
     /** Opens Android's file picker for audio; picked files are copied into the phone library. */
     @Command fun phonePickRecordings(invoke: Invoke) {
         // Audio, plus video containers recorders use (3GP, MP4, MOV, MKV, WebM) and files a

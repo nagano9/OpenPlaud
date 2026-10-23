@@ -47,6 +47,7 @@ import { api, type Recording } from "@/lib/api";
 import { formatDuration } from "@/lib/utils";
 import { formatDate, t, tn } from "@/i18n";
 import { BatchTranscribe } from '@/components/BatchTranscribe'
+import { PhoneOnlyRecordings } from '@/components/PhoneOnlyRecordings'
 import { COLLECTIONS_EVENT, CollectionContextSubmenu, CollectionDropdownSubmenu, CollectionNameDialog } from '@/components/RecordingCollections'
 import { knowledgeApi, type RecordingCollection } from '@/lib/knowledge'
 
@@ -283,6 +284,7 @@ export function Dashboard() {
         className={`studio-columns ${retention === "trash" ? "trash-layout" : ""}`}
       >
         <section className="studio-library" aria-label={t("Recording library")}>
+          {retention === "active" && !starred && !collectionId && <PhoneOnlyRecordings onSent={() => void load()} />}
           <header className="studio-library-heading">
             <div>
               <h1>

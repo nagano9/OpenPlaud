@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Bluetooth, Check, Loader2, Upload, UploadCloud, X } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import { deviceCommand } from '@/lib/plaud-device'
-import { phoneLibrary, type PhoneLibrary, type PhoneRecording } from '@/lib/phone-library'
+import { phoneLibrary, sendToComputer, type PhoneLibrary, type PhoneRecording } from '@/lib/phone-library'
 import { authenticatedHeaders, apiUrl, getRuntime } from '@/lib/runtime'
 import { formatDate, t } from '@/i18n'
 
@@ -85,7 +85,7 @@ export function PhoneBluetoothSync() {
       <span><strong>{item.name}</strong><small>{item.addedAt ? formatDate(item.addedAt) : ''} · {t('{value} KB', { value: (item.size / 1024).toFixed(0) })} · {status(item)}{item.inFolder ? ` · ${t('In {folder}', { folder })}` : ''}</small></span>
       {item.onDesktop ? <Check aria-label={t('On the computer')} />
         : item.send ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => void change(() => phoneLibrary.setSend(item.id, false))}><X />{t('Don’t send')}</Button>
-          : <Button size="sm" variant="outline" disabled={busy} onClick={() => void change(() => phoneLibrary.setSend(item.id, true))}><UploadCloud />{t('Send to computer')}</Button>}
+          : <Button size="sm" variant="outline" disabled={busy} onClick={() => void change(async () => { const result = await sendToComputer(item); setNotice(result.via === 'wifi' ? t('{name} is now on the computer.', { name: item.name }) : `${t('The computer is not reachable over Wi-Fi. {name} will be sent over Bluetooth.', { name: item.name })}${result.reason ? ` (${result.reason})` : ''}`); return result.library })}><UploadCloud />{t('Send to computer')}</Button>}
     </article>)}
 
     <label className="device-recording-row">
