@@ -44,7 +44,11 @@ export class OpenAiEngine implements TranscriptionEngine {
     try {
       signal.throwIfAborted(); options.onCheckpoint?.({ phase: 'submitting' });
       const response = await this.fetcher('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', redirect: 'error', headers: { Authorization: `Bearer ${this.key}` }, body: form, signal });
-      if (!response.ok) return transcriptionFailure(this.name, `OpenAI transcription failed (HTTP ${response.status}).`);
+      if (!response.ok) {
+        // OpenAI's own reason ("Audio file might be corrupted", "model not found") says what to fix.
+        const reason = await response.json().then((body: { error?: { message?: unknown } }) => typeof body?.error?.message === 'string' ? body.error.message.slice(0, 200) : '', () => '');
+        return transcriptionFailure(this.name, `OpenAI transcription failed (HTTP ${response.status})${reason ? `: ${reason}` : '.'}`);
+      }
       const payload = responseSchema.parse(await response.json());
       signal.throwIfAborted();
       return { success: true, engine: this.name, fullText: payload.text.trim(), segments: (payload.segments || []).map(s => ({ ...s, confidence: null })),

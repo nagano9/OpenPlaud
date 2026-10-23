@@ -461,6 +461,8 @@ export const devices: Record<string, string> = {
   'Don’t send': 'Ne pas envoyer',
   'Send to computer': 'Envoyer à l’ordinateur',
   'Saved on this phone': 'Enregistré sur ce téléphone',
+  'Recordings made in OpenPlod are also copied to the {folder} folder, so they stay even if the app is removed.': 'Les enregistrements faits dans OpenPlod sont aussi copiés dans le dossier {folder} : ils restent même si l’application est supprimée.',
+  'In {folder}': 'Dans {folder}',
   'Saved on this phone. Send it to the computer any time from Recordings on this phone.': 'Enregistré sur ce téléphone. Envoyez-le à l’ordinateur quand vous voulez depuis Enregistrements sur ce téléphone.',
   'Saved on this phone and sent to the computer.': 'Enregistré sur ce téléphone et envoyé à l’ordinateur.',
   'Saved on this phone. It will be sent to the computer over Bluetooth.': 'Enregistré sur ce téléphone. Il sera envoyé à l’ordinateur par Bluetooth.',

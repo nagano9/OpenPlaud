@@ -26,9 +26,10 @@ export function PhoneBluetoothSync() {
   const [state, setState] = useState<PhoneBleState | null>(null)
   const [library, setLibrary] = useState<PhoneRecording[] | null>(null)
   const [autoSend, setAutoSend] = useState(false)
+  const [folder, setFolder] = useState('')
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('')
 
-  const apply = useCallback((value: PhoneLibrary) => { setLibrary(value.recordings); setAutoSend(value.autoSend) }, [])
+  const apply = useCallback((value: PhoneLibrary) => { setLibrary(value.recordings); setAutoSend(value.autoSend); setFolder(value.folder ?? '') }, [])
   const loadLibrary = useCallback(() => phoneLibrary.list().then(apply).catch(() => undefined), [apply])
   const change = async (work: () => Promise<PhoneLibrary>) => {
     setBusy(true); setError('')
@@ -72,6 +73,7 @@ export function PhoneBluetoothSync() {
       <Button size="sm" disabled={busy} onClick={() => void pick()}>{busy ? <Loader2 className="animate-spin" /> : <Upload />}{t('Add from files')}</Button>
     </div>
     <p className="device-muted">{t('Recordings made in OpenPlod, picked from files, or shared from any app are saved on this phone. Nothing leaves the phone unless you send it.')}</p>
+    {folder && <p className="device-muted">{t('Recordings made in OpenPlod are also copied to the {folder} folder, so they stay even if the app is removed.', { folder })}</p>}
     <label className="device-recording-row">
       <input type="checkbox" checked={autoSend} disabled={busy || library === null} onChange={event => void change(() => phoneLibrary.setAutoSend(event.target.checked))} />
       <span><strong>{t('Send new recordings to the computer automatically')}</strong>
@@ -80,7 +82,7 @@ export function PhoneBluetoothSync() {
     {notice && <p className="device-muted" role="status">{notice}</p>}
     {library && library.length === 0 && <p className="device-muted">{t('No recordings yet.')}</p>}
     {library?.map(item => <article className="device-recording-row" key={item.id}>
-      <span><strong>{item.name}</strong><small>{item.addedAt ? formatDate(item.addedAt) : ''} · {t('{value} KB', { value: (item.size / 1024).toFixed(0) })} · {status(item)}</small></span>
+      <span><strong>{item.name}</strong><small>{item.addedAt ? formatDate(item.addedAt) : ''} · {t('{value} KB', { value: (item.size / 1024).toFixed(0) })} · {status(item)}{item.inFolder ? ` · ${t('In {folder}', { folder })}` : ''}</small></span>
       {item.onDesktop ? <Check aria-label={t('On the computer')} />
         : item.send ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => void change(() => phoneLibrary.setSend(item.id, false))}><X />{t('Don’t send')}</Button>
           : <Button size="sm" variant="outline" disabled={busy} onClick={() => void change(() => phoneLibrary.setSend(item.id, true))}><UploadCloud />{t('Send to computer')}</Button>}

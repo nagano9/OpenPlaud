@@ -1,8 +1,8 @@
 import { deviceCommand, supportsPlaudDevice } from './plaud-device'
 
 /** The Android app's own recording library (PhoneRecordings.kt). */
-export interface PhoneRecording { id: string; name: string; size: number; addedAt: number | null; onDesktop: boolean; send: boolean }
-export interface PhoneLibrary { recordings: PhoneRecording[]; autoSend: boolean; added?: number; skipped?: string[] }
+export interface PhoneRecording { id: string; name: string; size: number; addedAt: number | null; onDesktop: boolean; send: boolean; inFolder?: boolean }
+export interface PhoneLibrary { recordings: PhoneRecording[]; autoSend: boolean; folder?: string; added?: number; skipped?: string[] }
 
 /** Recordings made in OpenPlod on an Android phone are kept in the phone library. */
 export const hasPhoneLibrary = supportsPlaudDevice

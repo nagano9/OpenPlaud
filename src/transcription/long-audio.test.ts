@@ -115,3 +115,17 @@ test('runner refuses chunking that would drop requested speaker labels', async (
   expect(db.query('SELECT status FROM ai_spend_ledger').get()).toEqual({ status: 'not-sent' });
   db.close();
 });
+
+test('runner sends a clean copy of a WebM recording whose header has no duration', async () => {
+  const settings = { transcriptionEngine: 'openai' };
+  const db = runnerDb(settings), calls: string[] = [], log: string[] = [];
+  db.query('INSERT INTO recordings VALUES(?,?,?,?)').run('web', null, '/browser.webm', 800_000);
+  const result = await runTranscription(db, fakeRouter(calls), { jobId: 'job-3', recordingId: 'web', filePath: '/browser.webm', config: aiConfigSchema.parse(settings), options: {}, signal: new AbortController().signal, saveCheckpoint: () => {} }, splitter(log));
+  expect(result.success).toBe(true); expect(log).toEqual(['0+86400']);
+  expect(calls).toHaveLength(1); expect(calls[0]).toEndWith('audio.mp3');
+  expect(await Bun.file(calls[0]).exists()).toBe(false);
+  // A WebM file whose duration can be read is sent as stored.
+  await runTranscription(db, fakeRouter(calls), { jobId: 'job-4', recordingId: 'web', filePath: '/browser.webm', config: aiConfigSchema.parse(settings), options: {}, signal: new AbortController().signal, saveCheckpoint: () => {} }, splitter(log, 12));
+  expect(calls[1]).toBe('/browser.webm');
+  db.close();
+});

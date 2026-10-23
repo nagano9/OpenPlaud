@@ -1,4 +1,7 @@
 import type { Database } from 'bun:sqlite';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { extname, join } from 'node:path';
 import { isLocalProvider, type AiConfig } from '../ai/config';
 import { speechCapabilities, timestampGranularity } from '../ai/capabilities';
 import { costGate, estimateTranscription, recordingCostInput, recordSpend, settleSpend } from '../ai/spending';
@@ -16,6 +19,24 @@ export interface TranscriptionRun {
   signal: AbortSignal; checkpoint?: LongCheckpoint; saveCheckpoint: (checkpoint: LongCheckpoint) => void;
 }
 export class CostConfirmationError extends Error {}
+
+const STREAMED_CONTAINERS = new Set(['.webm', '.ogg', '.oga', '.opus']);
+/**
+ * Browser and phone recorders write WebM/Ogg as a stream with no duration in the header, which
+ * OpenAI and other providers reject (HTTP 400). Such a file is sent as a clean MP3 copy instead;
+ * the stored recording is not changed.
+ */
+async function repairedCopy(filePath: string, duration: number | null, splitter: AudioSplitter, signal: AbortSignal) {
+  if (!STREAMED_CONTAINERS.has(extname(filePath).toLowerCase())) return null;
+  if (duration ?? await splitter.probe(filePath, signal)) return null;
+  const directory = await mkdtemp(join(tmpdir(), 'openplod-repair-'));
+  const cleanup = () => rm(directory, { recursive: true, force: true }).catch(() => undefined);
+  try {
+    const path = join(directory, 'audio.mp3');
+    await splitter.extract(filePath, 0, 24 * 3600, path, signal);
+    return { path, cleanup };
+  } catch { await cleanup(); return null; }
+}
 
 /**
  * One recording's transcription for the job queue: cost gate and ledger (AI-10),
@@ -58,7 +79,9 @@ export async function runTranscription(database: Database, router: Transcription
       const single = router.primaryOnly();
       result = await transcribeChunks((path, opts) => single.transcribeFile(path, opts), run.filePath, plan, duration!, { ...options, signal, checkpoint, save, local: isLocalProvider(config, provider), provider }, splitter);
     } else {
-      result = await router.transcribeFile(run.filePath, { ...options, signal, checkpoint, onCheckpoint: next => save({ ...next, inFlight: !chainLocal }) });
+      const repaired = await repairedCopy(run.filePath, duration, splitter, signal);
+      try { result = await router.transcribeFile(repaired?.path ?? run.filePath, { ...options, signal, checkpoint, onCheckpoint: next => save({ ...next, inFlight: !chainLocal }) }); }
+      finally { await repaired?.cleanup(); }
     }
     signal.throwIfAborted();
     settle(result.success ? 'complete' : 'failed', result.success ? (result.metadata?.usage as Record<string, number> | null | undefined) ?? null : null);

@@ -461,6 +461,8 @@ export const devices: Record<string, string> = {
   'Don’t send': 'Batal kirim',
   'Send to computer': 'Kirim ke komputer',
   'Saved on this phone': 'Tersimpan di HP ini',
+  'Recordings made in OpenPlod are also copied to the {folder} folder, so they stay even if the app is removed.': 'Rekaman dari OpenPlod juga disalin ke folder {folder}, jadi tetap ada walaupun aplikasi dihapus.',
+  'In {folder}': 'Ada di {folder}',
   'Saved on this phone. Send it to the computer any time from Recordings on this phone.': 'Tersimpan di HP ini. Kirim ke komputer kapan saja dari Rekaman di HP ini.',
   'Saved on this phone and sent to the computer.': 'Tersimpan di HP ini dan sudah dikirim ke komputer.',
   'Saved on this phone. It will be sent to the computer over Bluetooth.': 'Tersimpan di HP ini. Rekaman akan dikirim ke komputer lewat Bluetooth.',
