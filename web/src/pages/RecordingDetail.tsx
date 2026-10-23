@@ -44,6 +44,7 @@ import { SegmentEditor } from '@/components/SegmentEditor'
 import { api, speakerLabel, type Recording, type TranscriptSegment, type TranscriptVersion } from '@/lib/api'
 import { formatDuration } from '@/lib/utils'
 import { formatDate, t } from '@/i18n'
+import { RECORDING_ACCEPT } from '@/lib/audio-formats'
 import { exportDocument, exportOriginalAudio, recordingMarkdown, safeDocumentName as safeName } from '@/lib/document-export'
 import { deviceCommand, supportsPlaudDevice, vaultArguments } from '@/lib/plaud-device'
 
@@ -507,7 +508,7 @@ export function RecordingDetail({ backPath = '/' }: { backPath?: string }) {
                 <div><dt>{t('Tags')}</dt><dd>{recording.tags.length ? recording.tags.join(', ') : t('None')}</dd></div>
               </dl>
             )}
-            <label className="replace-audio"><Upload />{t('Replace original audio')}<input type="file" accept="audio/*" onChange={event => {
+            <label className="replace-audio"><Upload />{t('Replace original audio')}<input type="file" accept={RECORDING_ACCEPT} onChange={event => {
               const file = event.target.files?.[0]
               if (!file) return
               void api.replaceAudio(recording.id, file, recording.revision).then(() => loadRecording()).catch(replaceError => setError(replaceError instanceof Error ? replaceError.message : t('Could not replace audio')))

@@ -15,8 +15,6 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.util.UUID
 
-/** File extensions accepted from a share whose MIME type is generic. */
-private val AUDIO_EXTENSIONS = setOf("m4a", "mp4", "aac", "mp3", "ogg", "opus", "wav", "flac", "amr", "3gp", "3ga", "webm", "wma")
 
 class MainActivity : TauriActivity() {
   private data class SharedAudio(
@@ -59,8 +57,7 @@ class MainActivity : TauriActivity() {
     // Recorder apps label audio inconsistently (audio/*, */*, application/octet-stream); the file decides.
     val name = displayName(uri)
     val resolvedType = runCatching { contentResolver.getType(uri) }.getOrNull()
-    val audio = listOfNotNull(intent.type, resolvedType).any { it.startsWith("audio/") } ||
-      name?.substringAfterLast('.', "")?.lowercase() in AUDIO_EXTENSIONS
+    val audio = listOfNotNull(intent.type, resolvedType).any { it.startsWith("audio/") } || (name != null && PhoneRecordings.isAudioName(name))
     android.util.Log.i("OpenPlodShare", "uri type=$resolvedType name=$name audio=$audio")
     if (!audio) return
 

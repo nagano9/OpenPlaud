@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const { sqlite } = await import('../db/client');
 const { initializeDatabase } = await import('../db/setup');
@@ -24,6 +24,9 @@ test('a received phone recording is converted, imported as a Bluetooth file and 
   expect(id).toBeString();
   const row = sqlite.query('SELECT original_filename AS name, source_provider AS provider, source_transport AS transport FROM recordings WHERE id=?').get(id!) as Record<string, string>;
   expect(row).toEqual({ name: 'Voice 001.m4a', provider: 'device', transport: 'bluetooth-file' });
+  // The file as received is kept beside the converted recording.
+  const stored = (sqlite.query('SELECT file_path AS path FROM recordings WHERE id=?').get(id!) as { path: string }).path;
+  expect(readdirSync(join(dirname(stored), 'originals', id!))).toContain('original.3gp');
   expect(queued).toEqual([id!]);
   // The same file again is a duplicate, not a second recording.
   expect(await inbox.importFile(amr)).toBeNull();

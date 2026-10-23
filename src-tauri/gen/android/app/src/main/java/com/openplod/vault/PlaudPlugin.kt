@@ -140,9 +140,11 @@ class PlaudPlugin(private val activity: Activity) : Plugin(activity) {
     }
     /** Opens Android's file picker for audio; picked files are copied into the phone library. */
     @Command fun phonePickRecordings(invoke: Invoke) {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/*")
+        // Audio, plus video containers recorders use (3GP, MP4, MOV, MKV, WebM) and files a
+        // file manager labels generically; anything picked that is not a recording format is skipped.
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
             .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-            .putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("audio/*", "video/3gpp", "application/ogg"))
+            .putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("audio/*", "video/*", "application/ogg", "application/octet-stream"))
         startActivityForResult(invoke, intent, "phonePickResult")
     }
     @ActivityCallback fun phonePickResult(invoke: Invoke, result: androidx.activity.result.ActivityResult) {

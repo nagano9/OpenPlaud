@@ -10,7 +10,7 @@ import { join } from 'path';
 import { db } from '../db/client';
 import { userSettings } from '../db/schema';
 import { eq } from 'drizzle-orm';
-import { importRecordingFile, inferRecordingType, isSupportedAudio } from '../library/recording-library';
+import { importRecordingFile, inferRecordingType, isImportableAudio } from '../library/recording-library';
 import { queueRecordingProcessing } from '../library/processing';
 
 export interface PlaudRecording {
@@ -99,7 +99,7 @@ export class FolderWatcher {
   }
 
   private isAudio(filename: string): boolean {
-    return isSupportedAudio(filename);
+    return isImportableAudio(filename);
   }
 
   /** Scan folder and list all audio files */

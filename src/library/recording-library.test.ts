@@ -60,19 +60,21 @@ describe('recording library', () => {
     expect(await (await transcriptsApi.request('/?source=plaud&offset=1')).json()).toMatchObject({ data: [] });
   });
 
-  test('discovers nested Plaud exports and ignores unsupported files', async () => {
+  test('discovers nested Plaud exports, including converted formats, and ignores non-audio files', async () => {
     const exportRoot = join(testRoot, 'plaud-exports');
     const nested = join(exportRoot, '2026-09-05_voice-note');
     mkdirSync(nested, { recursive: true });
     writeFileSync(join(exportRoot, 'meeting.M4A'), 'audio-one');
-    writeFileSync(join(nested, 'voice-note.opus'), 'unsupported');
+    writeFileSync(join(nested, 'voice-note.opus'), 'audio-three');
     writeFileSync(join(nested, 'voice-note.wav'), 'audio-two');
+    writeFileSync(join(nested, 'cover.jpg'), 'image');
     writeFileSync(join(exportRoot, 'metadata.json'), '{}');
 
     const recordings = await new FolderWatcher(exportRoot).listRecordings();
 
     expect(recordings.map(recording => recording.filename).sort()).toEqual([
       'meeting.M4A',
+      'voice-note.opus',
       'voice-note.wav',
     ]);
     expect(recordings.every(recording => recording.size > 0)).toBe(true);

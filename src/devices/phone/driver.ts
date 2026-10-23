@@ -3,7 +3,7 @@ import { extname, join } from 'node:path';
 import type { RecordingSourceDriver } from '../driver';
 import { phoneBridgeProfile, type PhoneRecording } from './protocol';
 import { PhoneSession, type KeyLookup, type PacketChannel } from './session';
-import { convertForImport, importRecordingFile, incomingDirectory, isConvertibleAudio, isSupportedAudio } from '../../library/recording-library';
+import { importRecordingFile, incomingDirectory, isImportableAudio } from '../../library/recording-library';
 import { findRustBridge, isDesktopPlatform } from '../../sync/plaud-bridge';
 import { PlaudTransport } from '../../sync/plaud-transport';
 import type { MobileClientStore } from '../../sync/mobile-clients';
@@ -11,12 +11,19 @@ import type { MobileClientStore } from '../../sync/mobile-clients';
 type Queue = (recording: { recordingId: string; filePath: string }) => Promise<unknown>;
 export interface PhoneConnection { channel: PacketChannel; close(): Promise<void> }
 
-const EXTENSIONS: Record<string, string> = { 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/opus': '.opus', 'audio/webm': '.webm', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/flac': '.flac', 'audio/amr': '.amr', 'audio/3gpp': '.3gp' };
+/** Extension for a recording whose name has none, by the MIME type Android reports. */
+const EXTENSIONS: Record<string, string> = {
+  'audio/mp4': '.m4a', 'audio/x-m4a': '.m4a', 'audio/mp4a-latm': '.m4a', 'audio/aac': '.aac', 'audio/aac-adts': '.aac', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3',
+  'audio/ogg': '.ogg', 'application/ogg': '.ogg', 'audio/opus': '.opus', 'audio/webm': '.webm', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/vnd.wave': '.wav',
+  'audio/flac': '.flac', 'audio/x-flac': '.flac', 'audio/amr': '.amr', 'audio/amr-wb': '.awb', 'audio/3gpp': '.3gp', 'audio/3gpp2': '.3g2', 'video/3gpp': '.3gp',
+  'audio/x-ms-wma': '.wma', 'audio/aiff': '.aiff', 'audio/x-aiff': '.aiff', 'audio/x-caf': '.caf', 'audio/x-matroska': '.mka', 'audio/ac3': '.ac3',
+  'video/mp4': '.mp4', 'video/quicktime': '.mov', 'video/x-matroska': '.mkv', 'video/webm': '.webm',
+};
 
 /** The audio file name to stage: the phone's own extension when known, else one from the MIME type. */
 export function phoneFileName(recording: PhoneRecording): string {
   const own = extname(recording.name).toLowerCase();
-  const extension = own && (isSupportedAudio(own) || isConvertibleAudio(own)) ? own : EXTENSIONS[recording.mime.toLowerCase()] ?? '.m4a';
+  const extension = own && isImportableAudio(own) ? own : EXTENSIONS[recording.mime.toLowerCase()] ?? '.m4a';
   const base = recording.name.replace(/\.[^.]+$/, '').replace(/[\x00-\x1f/\\:*?"<>|]/g, '_').trim().slice(0, 120) || `Phone-${recording.id}`;
   return `${base}${extension}`;
 }
@@ -84,9 +91,9 @@ export function phoneDriver(deps: {
         const name = phoneFileName(recording);
         const received = join(directory, name);
         await writeFile(received, bytes, { mode: 0o600 });
-        const staged = isConvertibleAudio(received) ? await convertForImport(received, directory) : received;
+        // The import converts formats such as Opus or AMR and keeps the file as the phone sent it.
         const result = await importRecordingFile({
-          sourcePath: staged, originalFilename: staged === received ? name : name.replace(/\.[^.]+$/, '.m4a'),
+          sourcePath: received, originalFilename: name,
           provenance: { sourceProvider: 'phone', sourceTransport: 'ble', sourceRecordingId: `${session.clientId}:${recording.id}`, recordedAt: recording.recordedAt },
         });
         if (result.added) await deps.queue({ recordingId: result.recording.id, filePath: result.recording.filePath });

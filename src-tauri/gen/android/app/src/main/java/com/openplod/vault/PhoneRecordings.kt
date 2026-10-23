@@ -92,9 +92,18 @@ class PhoneRecordings(private val context: Context) {
     companion object {
         /** Library ids sit far above MediaStore row ids: 2^50 + the time the file was added. */
         const val OUTBOX_BASE = 1L shl 50
-        private val extensions = mapOf("m4a" to "audio/mp4", "mp4" to "audio/mp4", "aac" to "audio/aac", "mp3" to "audio/mpeg", "ogg" to "audio/ogg",
-            "opus" to "audio/opus", "wav" to "audio/wav", "flac" to "audio/flac", "amr" to "audio/amr", "3gp" to "audio/3gpp", "3ga" to "audio/3gpp",
-            "webm" to "audio/webm", "wma" to "audio/x-ms-wma")
+        /**
+         * Recording formats the phone library accepts, with the MIME type sent to the desktop. Keep in
+         * step with AUDIO_EXTENSIONS and CONVERTIBLE_AUDIO_EXTENSIONS in src/library/recording-library.ts:
+         * the desktop converts everything that is not MP3/M4A/WAV/OGG/WebM/AAC/FLAC and keeps the original.
+         */
+        private val extensions = mapOf(
+            "m4a" to "audio/mp4", "aac" to "audio/aac", "mp3" to "audio/mpeg", "wav" to "audio/wav", "flac" to "audio/flac",
+            "ogg" to "audio/ogg", "oga" to "audio/ogg", "opus" to "audio/opus", "webm" to "audio/webm",
+            "amr" to "audio/amr", "awb" to "audio/amr-wb", "3gp" to "audio/3gpp", "3g2" to "audio/3gpp2", "3ga" to "audio/3gpp",
+            "m4b" to "audio/mp4", "m4r" to "audio/mp4", "wma" to "audio/x-ms-wma", "aif" to "audio/aiff", "aiff" to "audio/aiff", "aifc" to "audio/aiff",
+            "caf" to "audio/x-caf", "mka" to "audio/x-matroska", "ac3" to "audio/ac3", "mp2" to "audio/mpeg", "mpga" to "audio/mpeg",
+            "mp4" to "video/mp4", "m4v" to "video/mp4", "mov" to "video/quicktime", "mkv" to "video/x-matroska")
 
         /**
          * The phone's own recording library: audio shared to OpenPlod or picked from files. It is

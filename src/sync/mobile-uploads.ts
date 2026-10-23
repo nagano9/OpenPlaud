@@ -4,7 +4,7 @@ import { open, unlink } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import type { Database } from 'bun:sqlite';
 import {
-  fingerprintFile, importRecordingFile, incomingDirectory, isSupportedAudio, RecordingImportConflict, safeFilename,
+  fingerprintFile, importRecordingFile, incomingDirectory, isImportableAudio, RecordingImportConflict, safeFilename,
   type RecordingProvenance,
 } from '../library/recording-library';
 import { initializeMobileSync } from './mobile-schema';
@@ -133,7 +133,7 @@ export class MobileUploads {
     if (!Number.isSafeInteger(size) || size <= 0) throw new UploadError('A positive file size is required.', 400, 'invalid_size');
     if (size > MAX_UPLOAD_BYTES) throw new UploadError('The recording exceeds the upload limit.', 413, 'too_large');
     const filename = safeFilename(typeof input.filename === 'string' ? input.filename : '');
-    if (!isSupportedAudio(filename)) throw new UploadError('The file is not a supported audio format.', 400, 'unsupported_format');
+    if (!isImportableAudio(filename)) throw new UploadError('The file is not a supported audio format.', 400, 'unsupported_format');
     const metadata = parseMetadata(input.metadata);
     return withLock(`create:${clientId}:${fingerprint}`, async () => {
       const existing = this.sqlite.query(`SELECT * FROM mobile_uploads WHERE client_id = ? AND fingerprint = ? AND state IN ('open', 'complete')

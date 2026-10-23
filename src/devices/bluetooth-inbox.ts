@@ -1,9 +1,9 @@
 import type { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
-import { readdir, rm, stat } from 'node:fs/promises';
-import { basename, extname, join, resolve } from 'node:path';
+import { readdir, stat } from 'node:fs/promises';
+import { basename, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { convertForImport, importRecordingFile, incomingDirectory, isConvertibleAudio, isSupportedAudio } from '../library/recording-library';
+import { importRecordingFile, isImportableAudio } from '../library/recording-library';
 
 export const DEFAULT_BLUETOOTH_INBOX = join(homedir(), 'Documents', 'OpenPlaud Bluetooth');
 const STABLE_MS = 3000;
@@ -81,7 +81,7 @@ export class BluetoothInbox {
   }
 
   private schedule(path: string) {
-    if (!isSupportedAudio(path) && !isConvertibleAudio(path)) return;
+    if (!isImportableAudio(path)) return;
     clearTimeout(this.timers.get(path));
     this.timers.set(path, setTimeout(() => { this.timers.delete(path); void this.importWhenStable(path); }, STABLE_MS));
   }
@@ -110,15 +110,11 @@ export class BluetoothInbox {
 
   /** Imports one received file; returns the recording id, or null when it was already in the vault. */
   async importFile(path: string): Promise<string | null> {
-    const convert = isConvertibleAudio(path);
-    const staged = convert ? await convertForImport(path, join(incomingDirectory(), 'bluetooth')) : path;
-    try {
-      const name = convert ? `${basename(path, extname(path))}.m4a` : basename(path);
-      const result = await importRecordingFile({ sourcePath: staged, originalFilename: name, provenance: { sourceProvider: 'device', sourceTransport: 'bluetooth-file' } });
-      if (!result.added) return null;
-      await this.queue({ recordingId: result.recording.id, filePath: result.recording.filePath });
-      return result.recording.id;
-    } finally { if (convert) await rm(staged, { force: true }); }
+    // The import converts formats such as AMR or 3GP and keeps the received file beside the recording.
+    const result = await importRecordingFile({ sourcePath: path, originalFilename: basename(path), provenance: { sourceProvider: 'device', sourceTransport: 'bluetooth-file' } });
+    if (!result.added) return null;
+    await this.queue({ recordingId: result.recording.id, filePath: result.recording.filePath });
+    return result.recording.id;
   }
 
   private record(path: string, recordingId: string | null, error: string | null = null) {

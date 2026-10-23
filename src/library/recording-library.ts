@@ -10,9 +10,16 @@ import { purgeRecordingData } from './purge';
 import { recordings, transcripts, userSettings } from '../db/schema';
 import { and, eq, or } from 'drizzle-orm';
 
+/** Formats stored as they are: every transcription provider and the player read them. */
 export const AUDIO_EXTENSIONS = new Set(['.mp3', '.m4a', '.wav', '.ogg', '.webm', '.aac', '.flac']);
-/** Phone recorder formats that are converted to M4A before import (see `convertForImport`). */
-export const CONVERTIBLE_AUDIO_EXTENSIONS = new Set(['.opus', '.amr', '.3gp', '.3ga', '.m4b', '.wma', '.mp4']);
+/**
+ * Common recorder and messaging formats converted to M4A on import (see `convertForImport`), with
+ * the original kept beside it: Opus/OGA (WhatsApp, Telegram), AMR/AWB (call and older Android
+ * recorders), 3GP/3G2/3GA (Android recorders), M4B/M4R, WMA (Windows recorders), AIFF/CAF (Apple),
+ * MKA, AC3/MP2/MPGA, and the audio track of MP4/M4V/MOV/MKV/WebM videos.
+ */
+export const CONVERTIBLE_AUDIO_EXTENSIONS = new Set(['.opus', '.oga', '.amr', '.awb', '.3gp', '.3g2', '.3ga', '.m4b', '.m4r', '.wma', '.aif', '.aiff', '.aifc', '.caf',
+  '.mka', '.ac3', '.mp2', '.mpga', '.mp4', '.m4v', '.mov', '.mkv']);
 export const TRASH_RETENTION_DAYS = 30;
 
 export class RecordingImportConflict extends Error {}
@@ -51,6 +58,14 @@ export function isSupportedAudio(filePath: string): boolean {
 export function isConvertibleAudio(filePath: string): boolean {
   return CONVERTIBLE_AUDIO_EXTENSIONS.has(extname(filePath).toLowerCase());
 }
+
+/** Any recording the vault accepts: stored as is, or converted on import. */
+export function isImportableAudio(filePath: string): boolean {
+  return isSupportedAudio(filePath) || isConvertibleAudio(filePath);
+}
+
+/** `name.amr` → `name.m4a`, for the converted copy. */
+export const convertedName = (name: string) => `${name.replace(/\.[^.]+$/, '')}.m4a`;
 
 /**
  * Converts a phone-recorder format (AMR, 3GP, Opus...) to AAC/M4A with ffmpeg so every
@@ -106,8 +121,22 @@ export async function importRecordingFile(params: {
   sidecars?: ImportSidecar[];
 }): Promise<{ recording: ImportedRecording; added: boolean }> {
   const sourcePath = resolve(params.sourcePath);
-  if (!existsSync(sourcePath) || !isSupportedAudio(sourcePath)) {
+  if (!existsSync(sourcePath) || !isImportableAudio(sourcePath)) {
     throw new Error('The selected file is not a supported audio recording.');
+  }
+  // Other formats are converted to M4A for every provider and the player; the file as received is
+  // kept beside the recording, so no original is lost.
+  if (isConvertibleAudio(sourcePath)) {
+    if (params.expectedFingerprint && params.expectedFingerprint !== await fingerprintFile(sourcePath)) {
+      throw new RecordingImportConflict('Audio fingerprint mismatch. Keep the local recording and retry.');
+    }
+    const directory = join(incomingDirectory(), 'convert', crypto.randomUUID());
+    try {
+      const converted = await convertForImport(sourcePath, directory);
+      const name = params.originalFilename ?? basename(sourcePath);
+      return await importRecordingFile({ ...params, sourcePath: converted, originalFilename: convertedName(name), expectedFingerprint: undefined,
+        sidecars: [...(params.sidecars ?? []), { name: `original${extname(sourcePath).toLowerCase()}`, sourcePath }] });
+    } finally { await rm(directory, { recursive: true, force: true }).catch(() => undefined); }
   }
 
   const fingerprint = await fingerprintFile(sourcePath);
@@ -259,7 +288,14 @@ export async function replaceRecordingAudio(params: {
   if (params.expectedRevision !== undefined && recording.revision !== params.expectedRevision) {
     throw new Error('revision_conflict');
   }
-  if (!isSupportedAudio(params.sourcePath)) throw new Error('Unsupported audio format.');
+  if (!isImportableAudio(params.sourcePath)) throw new Error('Unsupported audio format.');
+  if (isConvertibleAudio(params.sourcePath)) {
+    const directory = join(incomingDirectory(), 'convert', crypto.randomUUID());
+    try {
+      const converted = await convertForImport(params.sourcePath, directory);
+      return await replaceRecordingAudio({ ...params, sourcePath: converted, originalFilename: convertedName(params.originalFilename ?? basename(params.sourcePath)) });
+    } finally { await rm(directory, { recursive: true, force: true }).catch(() => undefined); }
+  }
 
   const extension = extname(params.sourcePath).toLowerCase();
   const destination = join(dirname(recording.filePath), `${recording.id}${extension}`);

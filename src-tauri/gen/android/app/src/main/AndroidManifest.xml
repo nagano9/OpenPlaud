@@ -49,8 +49,9 @@
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="audio/*" />
-                <!-- Some recorders share AMR/3GP recordings with these types. -->
+                <!-- Recorders also share AMR/3GP, Opus/OGG and MP4 recordings with these types. -->
                 <data android:mimeType="video/3gpp" />
+                <data android:mimeType="video/mp4" />
                 <data android:mimeType="application/ogg" />
             </intent-filter>
         </activity>

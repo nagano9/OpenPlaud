@@ -320,6 +320,10 @@ export const workspace: Record<string, string> = {
   'Import selected': 'Importer la sélection',
   'Import {count} selected file into your vault?': 'Importer {count} fichier sélectionné dans votre coffre ?',
   'Import {count} selected files into your vault?': 'Importer {count} fichiers sélectionnés dans votre coffre ?',
+  '{count} recording saved to your vault.': '{count} enregistrement enregistré dans votre coffre.',
+  '{count} recordings saved to your vault.': '{count} enregistrements enregistrés dans votre coffre.',
+  'not a recording format': 'pas un format d’enregistrement',
+  'Accepted: MP3, M4A, WAV, AAC, FLAC, OGG, Opus, WebM, AMR, 3GP, WMA, AIFF, CAF, and the audio of MP4, MOV and MKV videos. Formats other than the first seven are converted to M4A; the original file is kept.': 'Acceptés : MP3, M4A, WAV, AAC, FLAC, OGG, Opus, WebM, AMR, 3GP, WMA, AIFF, CAF, et l’audio des vidéos MP4, MOV et MKV. Les formats autres que les sept premiers sont convertis en M4A ; le fichier d’origine est conservé.',
 
   // Developer
   'Desktop API': 'API desktop',
