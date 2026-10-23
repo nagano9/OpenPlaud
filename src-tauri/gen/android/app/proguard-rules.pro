@@ -19,3 +19,14 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+# OkHttp's optional TLS providers (not used on Android).
+-dontwarn org.bouncycastle.jsse.**
+-dontwarn org.conscrypt.**
+-dontwarn org.openjsse.**
+
+# The Tauri plugin and its Bluetooth services are reached by reflection (@Command, @TauriPlugin)
+# and from the manifest; BouncyCastle registers its algorithms by name.
+-keep class com.openplod.vault.** { *; }
+-keep class org.bouncycastle.** { *; }
+# BouncyCastle's LDAP certificate store, which Android does not have.
+-dontwarn javax.naming.**

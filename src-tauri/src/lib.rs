@@ -80,21 +80,37 @@ fn ble_bridge_path() -> Option<PathBuf> {
   path.is_file().then_some(path)
 }
 
+/// Where the vault lives: `OPENPLOD_VAULT_DIR`, else the folder named in `vault-location` inside the
+/// app data folder (so an existing vault, its pairing and its paired phones keep working), else the
+/// app data folder itself.
+#[cfg(desktop)]
+fn vault_dir(app_data_dir: &PathBuf) -> PathBuf {
+  std::env::var_os("OPENPLOD_VAULT_DIR").map(PathBuf::from)
+    .or_else(|| fs::read_to_string(app_data_dir.join("vault-location")).ok()
+      .map(|value| PathBuf::from(value.trim())).filter(|path| !path.as_os_str().is_empty()))
+    .unwrap_or_else(|| app_data_dir.clone())
+}
+
 #[cfg(desktop)]
 fn start_service(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
   let app_data_dir = app.path().app_data_dir()?;
   fs::create_dir_all(&app_data_dir)?;
-  let library_dir = app_data_dir.join("recordings");
+  let vault = vault_dir(&app_data_dir);
+  fs::create_dir_all(&vault)?;
+  let library_dir = vault.join("recordings");
   fs::create_dir_all(&library_dir)?;
-  let pairing_token = read_or_create_token(&app_data_dir)?;
+  let pairing_token = read_or_create_token(&vault)?;
+  // A vault first run from source keeps its database as plaud.db.
+  let database = [vault.join("openplod.db"), vault.join("plaud.db")].into_iter().find(|path| path.is_file())
+    .unwrap_or_else(|| vault.join("openplod.db"));
 
   let command = app
     .shell()
     .sidecar("openplod-server")?
-    .current_dir(&app_data_dir)
+    .current_dir(&vault)
     .env("HOST", "0.0.0.0")
     .env("PORT", SERVICE_PORT.to_string())
-    .env("DATABASE_URL", app_data_dir.join("openplod.db"))
+    .env("DATABASE_URL", database)
     .env("OPENPLOD_LIBRARY_PATH", library_dir)
     .env("OPENPLOD_PAIRING_TOKEN", &pairing_token);
   // Every desktop platform speaks Bluetooth through the same bundled
@@ -131,6 +147,53 @@ fn start_service(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
   Ok(())
 }
 
+/// Passed by the sign-in launcher: start the vault without showing the window.
+#[cfg(desktop)]
+const BACKGROUND_ARG: &str = "--background";
+
+#[cfg(desktop)]
+fn show_main(app: &tauri::AppHandle) {
+  if let Some(window) = app.get_webview_window("main") {
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+  }
+}
+
+/// The vault keeps serving the paired phone while the window is closed: a tray icon reopens or quits
+/// it, and on first run OpenPlod is set to start in the tray when the person signs in (they can turn
+/// that off in Windows' Startup apps).
+#[cfg(desktop)]
+fn background(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+  use tauri::menu::{Menu, MenuItem};
+  use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+  use tauri_plugin_autostart::ManagerExt;
+
+  let open = MenuItem::with_id(app, "open", "Open OpenPlod", true, None::<&str>)?;
+  let quit = MenuItem::with_id(app, "quit", "Quit (stops the vault)", true, None::<&str>)?;
+  let menu = Menu::with_items(app, &[&open, &quit])?;
+  let mut tray = TrayIconBuilder::with_id("vault").tooltip("OpenPlod vault").menu(&menu).show_menu_on_left_click(false)
+    .on_menu_event(|app, event| match event.id.as_ref() {
+      "open" => show_main(app),
+      "quit" => app.exit(0),
+      _ => {}
+    })
+    .on_tray_icon_event(|tray, event| {
+      if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event { show_main(tray.app_handle()) }
+    });
+  if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
+  tray.build(app)?;
+
+  let marker = app.path().app_data_dir()?.join("autostart-offered");
+  if !marker.exists() {
+    let _ = app.autolaunch().enable();
+    let _ = fs::write(&marker, "1");
+  }
+  // The window starts hidden (tauri.conf.json) so a sign-in launch does not flash it.
+  if !std::env::args().any(|arg| arg == BACKGROUND_ARG) { show_main(app.handle()); }
+  Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let builder = tauri::Builder::default()
@@ -139,7 +202,10 @@ pub fn run() {
     .plugin(tauri_plugin_shell::init())
     .setup(|app| {
       #[cfg(desktop)]
-      start_service(app)?;
+      {
+        start_service(app)?;
+        background(app)?;
+      }
 
       #[cfg(mobile)]
       app.manage(RuntimeInfo {
@@ -154,7 +220,15 @@ pub fn run() {
 
   // REL-07: update checks verify the release signature against the build-time public key.
   #[cfg(desktop)]
-  let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+  let builder = builder.plugin(tauri_plugin_updater::Builder::new().build())
+    .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec![BACKGROUND_ARG])))
+    // Closing the window keeps the vault running in the tray; Quit in the tray menu stops it.
+    .on_window_event(|window, event| {
+      if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        api.prevent_close();
+        let _ = window.hide();
+      }
+    });
 
   #[cfg(desktop)]
   let builder = builder.invoke_handler(tauri::generate_handler![

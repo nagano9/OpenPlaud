@@ -14,6 +14,8 @@ const bunTargets: Record<string, string> = {
   'aarch64-unknown-linux-gnu': 'bun-linux-arm64',
   'x86_64-unknown-linux-gnu': 'bun-linux-x64',
   'x86_64-pc-windows-msvc': 'bun-windows-x64',
+  // Windows builds made with the MinGW (GNU) Rust toolchain.
+  'x86_64-pc-windows-gnu': 'bun-windows-x64',
 }
 
 const triple = process.argv[2]
@@ -61,3 +63,9 @@ const bridgeOutput = resolve(outputDirectory, `plaud-bridge-${triple}${suffix}`)
 copyFileSync(bridgeRelease, bridgeOutput)
 if (!suffix) chmodSync(bridgeOutput, 0o755)
 console.log(`[Tauri] Bluetooth bridge ready: ${bridgeOutput}`)
+
+// The Windows bundler looks the sidecars up under the MSVC triple even when the app is built with
+// the GNU toolchain, so GNU builds provide both names.
+if (triple === 'x86_64-pc-windows-gnu') {
+  for (const name of [outputPath, bridgeOutput]) copyFileSync(name, name.replace('windows-gnu', 'windows-msvc'))
+}
